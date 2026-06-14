@@ -1,0 +1,1 @@
+"""Test lot calculator."""

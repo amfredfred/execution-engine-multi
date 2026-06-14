@@ -1,0 +1,125 @@
+﻿# Execution Engine â€” configuration
+# Copy to config.yaml and fill in your values. config.yaml is git-ignored.
+# Secrets (MT5_PASSWORD, APEX_ACTIVATION_KEY) go in .env.
+
+gateway:
+  ws_url: wss://apex-gateway.somicast.com/engine
+  engine_id: execution-demo-001
+  # engine_version is platform-managed — resolved from version.txt at startup.
+  room_ttl_seconds: 3600
+  symbols:
+    - XAUUSD
+    - US100
+    - EURUSD
+    - GBPUSD
+    - USDJPY
+
+mt5:
+  login: 106189638
+  # password â†’ set MT5_PASSWORD in .env
+  server: FBS-Demo
+  path: C:\Program Files\FBS MetaTrader 5\terminal64.exe
+  magic: 8858
+  slippage: 10
+  comment: bobisquote
+
+risk:
+  # Aligned with signal-engine circuit_breaker.max_consecutive_losses=10.
+  max_losing_streak: 10
+  max_daily_loss_percent: 2.5
+  max_exposure_per_symbol: 2
+  min_rr_ratio: 1.0
+  max_lot_size: 100.0
+  min_lot_size: 0.01
+  # Reject if live spread costs more than this fraction of the SL distance.
+  # Example: 0.25 rejects 14.0 spread / 36.7 SL = 0.38.
+  sl_ratio_threshold: 0.35
+  symbol_sl_ratio_threshold:
+    XAUUSD: 0.35   # commodity — wider spread tolerance
+    US100: 0.20    # index — tight SL-to-spread requirement
+    EURUSD: 0.30   # forex
+    GBPUSD: 0.30   # forex
+    USDJPY: 0.30   # forex
+  no_hedging: true
+  # Profit drawdown guard — pauses until midnight if today's closed P&L gives
+  # back this % of start-of-day equity from its session peak. Dormant until
+  # the first profitable close (nothing to protect until gains are banked).
+  # Set to 0 to disable.
+  max_profit_drawdown_percent: 2.0
+  # Rolling equity window guard — pauses if broker equity swings more than
+  # rolling_drawdown_pct% across the last rolling_window_size readings.
+  # Disabled when rolling_window_size < 3 (set to 0 to disable entirely).
+  rolling_window_size: 2
+  rolling_drawdown_pct: 2.0
+  # Equity-curve risk throttle — halves position risk while recent realized
+  # results sit deep below their rolling peak, restoring full size on
+  # recovery. Thresholds and window are platform-managed; `enabled` is the
+  # only user-facing knob.
+  equity_throttle:
+    enabled: true
+  # Cluster risk guard — caps total intraday risk across correlated symbols.
+  # Cross-symbol correlation is near-zero across all 5 pairs (max 0.13
+  # EURUSD/USDJPY over 3yr backtest), so this is disabled by default.
+  cluster_risk:
+    enabled: false
+    groups:
+      - name: forex
+        symbols: [EURUSD, GBPUSD, USDJPY]
+        # Total R this cluster may lose in a single day before blocking new trades.
+        max_same_day_loss_r: 2.0
+        # No more than this many pending+open trades at once across the group.
+        max_concurrent_positions: 3
+        # Block all new entries once this many losses have been taken today.
+        max_same_day_losses: 3
+        # Risk fraction applied to every trade after the first loss (e.g. 0.5 = half size).
+        after_first_loss_risk_multiplier: 0.75
+        # If the remaining budget is below this fraction, block rather than trade tiny.
+        min_trade_risk_multiplier: 0.25
+      - name: indices
+        symbols: [US100]
+        max_same_day_loss_r: 1.5
+        max_concurrent_positions: 1
+        max_same_day_losses: 2
+        after_first_loss_risk_multiplier: 0.5
+        min_trade_risk_multiplier: 0.25
+      - name: metals
+        symbols: [XAUUSD]
+        max_same_day_loss_r: 1.5
+        max_concurrent_positions: 1
+        max_same_day_losses: 2
+        after_first_loss_risk_multiplier: 0.5
+        min_trade_risk_multiplier: 0.25
+
+execution:
+  # TP1 fires when price reaches this % of entry->TP2 range.
+  # Global default 45% applies to XAUUSD, EURUSD, GBPUSD, USDJPY.
+  # US100 overrides to 25% (volatile index — partial close triggered earlier).
+  # Note: post v0.2.0 LTF removal, use "*" as the TF wildcard (not "5/5").
+  tp1_trigger_pct: 45.0
+  tp1_percentage: 0.0
+  move_sl_to_be_on_tp1: true
+  # 0 = entry BE; otherwise multiplier must be >= 1 to cover at least one spread.
+  breakeven_spread_multiplier: 1.5
+  # Soft cap on extra margin; the buffer will never be clipped below one spread.
+  breakeven_max_buffer_pct_of_risk: 10.0
+  # Per-symbol TP1 trigger overrides.
+  # Keys: symbol name (or "*" = any symbol), then "*" for any timeframe.
+  # Priority: symbol+* > *+* > global tp1_trigger_pct.
+  tf_overrides:
+    US100:
+      "*":
+        tp1_trigger_pct: 25.0
+  spread_risk_multiplier: 1.0
+  order_retry_count: 2
+  order_retry_delay_sec: 0.5
+  max_entry_slippage_pct_of_stop: 0.20
+  max_signal_age_ms: 120000
+  close_on_slippage_exceed: false
+  adjust_levels_on_slippage: false
+
+engine:
+  timezone: UTC
+  log_level: INFO
+  storage_path: ./data
+  monitoring_port: 8080
+  position_poll_interval: 0.6

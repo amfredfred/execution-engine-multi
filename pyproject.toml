@@ -1,0 +1,139 @@
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ── Project metadata ───────────────────────────────────────────────────────────
+
+[project]
+name        = "apex-quant-trader-agent"
+version     = "0.1.0"
+description = "Apex Quantel — trade execution agent for MetaTrader 5"
+readme      = { text = "", content-type = "text/plain" }
+license     = { text = "Proprietary" }
+requires-python = ">=3.12"
+
+keywords = ["trading", "metatrader", "mt5", "forex", "execution", "risk-management"]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+]
+
+dependencies = [
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    "tzdata>=2025.2",
+    "websocket-client>=1.8.0",
+    "websockets>=12.0",
+    "MetaTrader5>=5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+]
+
+[project.scripts]
+apex-quant-trader-agent = "src.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/apexquantel/apex-quant-trader"
+Issues     = "https://github.com/apexquantel/apex-quant-trader/issues"
+
+# ── Hatch (build) ──────────────────────────────────────────────────────────────
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+# ── Ruff (linter + formatter, replaces flake8 + black + isort) ────────────────
+
+[tool.ruff]
+target-version = "py312"
+line-length    = 100
+src            = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "RUF",  # ruff-specific
+    "ANN",  # flake8-annotations (type hints)
+    "PTH",  # use pathlib
+    "LOG",  # flake8-logging
+]
+ignore = [
+    "ANN101",  # missing type for self
+    "ANN102",  # missing type for cls
+    "ANN401",  # allow Any in certain contexts
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["execution-engine"]
+
+[tool.ruff.format]
+quote-style          = "double"
+indent-style         = "space"
+skip-magic-trailing-comma = false
+
+# ── Mypy (static type checking) ───────────────────────────────────────────────
+
+[tool.mypy]
+python_version         = "3.12"
+mypy_path              = "src"
+strict                 = true
+warn_return_any        = true
+warn_unused_configs    = true
+disallow_untyped_defs  = true
+ignore_missing_imports = true     # MetaTrader5 has no stubs
+
+[[tool.mypy.overrides]]
+module            = "MetaTrader5.*"
+ignore_missing_imports = true
+
+# ── Pytest ─────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths       = ["tests"]
+asyncio_mode    = "auto"
+addopts         = [
+    "--strict-markers",
+    "--tb=short",
+    "-q",
+]
+markers = [
+    "unit: pure unit tests — no I/O",
+    "integration: requires MT5 terminal or live broker",
+    "slow: long-running tests",
+]
+
+# ── Coverage ───────────────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source    = ["src/execution-engine"]
+omit      = ["*/__main__.py", "*/infra/html/*"]
+branch    = true
+
+[tool.coverage.report]
+show_missing   = true
+skip_covered   = false
+fail_under     = 70
+exclude_lines  = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
