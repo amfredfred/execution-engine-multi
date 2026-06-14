@@ -65,10 +65,14 @@ _INTERNAL_DEFAULTS: dict = {
         "comment": "bobisquote",
     },
     "risk": {
+        "max_losing_streak": 3,
+        "max_daily_loss_percent": 2.5,
         "max_exposure_per_symbol": 2,
         "min_rr_ratio": 1.0,
+        "max_lot_size": 100.0,
         "min_lot_size": 0.01,
         "sl_ratio_threshold": 0.35,
+        "max_profit_drawdown_percent": 2.0,
         "symbol_sl_ratio_threshold": {
             "XAUUSD": 0.35,
             "US100": 0.20,
@@ -622,8 +626,8 @@ class AppConfig:
 class ManagerConfig:
     storage_path: str
     agents_data_dir: str
-    api_port: int = 8765
-    channel_port: int = 8766
+    api_port: int = 8870
+    channel_port: int = 8871
     legacy_config_path: str = ""
     gateway_ws_url: str = ""
     gateway_http_url: str = ""

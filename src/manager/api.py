@@ -1,5 +1,5 @@
 """
-manager/api.py — LocalManagerApi: REST server on port 8765.
+manager/api.py — LocalManagerApi: REST server on port 8870.
 
 Uses stdlib http.server.ThreadingHTTPServer — no extra dependencies.
 All routes require Authorization: Bearer <token>.
@@ -13,7 +13,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -37,8 +37,9 @@ class LocalManagerApi:
         discovery: "TerminalDiscovery",
         channel: "AgentChannel",
         token: str,
-        port: int = 8765,
+        port: int = 8870,
         storage_path: str = "",
+        on_activation_key_changed: Callable[[str], None] | None = None,
     ) -> None:
         self._registry    = registry
         self._ops         = ops
@@ -48,6 +49,7 @@ class LocalManagerApi:
         self._token       = token
         self._port        = port
         self._storage_path = storage_path
+        self._on_activation_key_changed = on_activation_key_changed
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -79,6 +81,7 @@ class LocalManagerApi:
         discovery   = self._discovery
         channel     = self._channel
         token       = self._token
+        on_activation_key_changed = self._on_activation_key_changed
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, fmt, *args):
@@ -167,6 +170,9 @@ class LocalManagerApi:
                         for t in terminals
                     ]})
 
+                elif parts == ["license"]:
+                    self._send(200, provisioner.get_license_info())
+
                 elif len(parts) == 2 and parts[0] == "operations":
                     op = registry.get_operation(parts[1])
                     if not op:
@@ -189,6 +195,29 @@ class LocalManagerApi:
                     body = self._body()
                     op_id = ops.submit("provision", "__new__", payload=body)
                     self._send(202, {"op_id": op_id})
+
+                elif parts == ["license", "preflight"]:
+                    body = self._body()
+                    activation_key = str(body.get("activation_key") or "").strip()
+                    try:
+                        if activation_key:
+                            info = provisioner.preflight_license(activation_key)
+                        else:
+                            info = provisioner.get_license_info(force=True)
+                        self._send(200, info)
+                    except Exception as exc:
+                        self._send(400, {"valid": False, "symbols": [], "error": str(exc)})
+
+                elif parts == ["license"]:
+                    body = self._body()
+                    activation_key = str(body.get("activation_key") or "").strip()
+                    try:
+                        info = provisioner.set_activation_key(activation_key)
+                        if on_activation_key_changed:
+                            on_activation_key_changed(activation_key)
+                        self._send(200, info)
+                    except Exception as exc:
+                        self._send(400, {"valid": False, "symbols": [], "error": str(exc)})
 
                 elif len(parts) == 3 and parts[0] == "agents":
                     agent_id = parts[1]

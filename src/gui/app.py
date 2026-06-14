@@ -50,9 +50,10 @@ from src.gui.manager_state   import ManagerAppState
 from src.gui.manager_client  import ManagerClient
 
 
-_NAV_PAGES = ["Agents", "Home", "Engine", "Platform", "Risk", "Activity", "Settings", "Advanced"]
+_NAV_PAGES = ["Agents", "Manager", "Home", "Engine", "Platform", "Risk", "Activity", "Settings", "Advanced"]
 _NAV_ICONS = {
     "Agents":    "⬡",
+    "Manager":   "⚙",
     "Home":      "⬡",
     "Engine":    "⚡",
     "Platform":  "⬡",
@@ -63,7 +64,8 @@ _NAV_ICONS = {
 }
 # Display labels shown in the sidebar (internal page keys stay unchanged)
 _NAV_LABELS = {
-    "Engine": "AQ Agent",
+    "Engine":  "AQ Agent",
+    "Manager": "AQ Manager",
 }
 
 # Pages only shown when viewing a specific agent (not in fleet mode)
@@ -111,12 +113,16 @@ class ApexTraderGUI(ctk.CTk):
         )
 
         # Manager fleet state + HTTP poller
+        self._manager_online: bool = False
+        self._last_manager_contact: float = 0.0
+        self._manager_license_sync_attempted: bool = False
         self.manager_state  = ManagerAppState()
         self.manager_client = ManagerClient(
             on_agents=lambda data: self._msg_queue.put({"type": "_manager_agents", "payload": data}),
-            on_error =lambda err:  None,   # silent — manager may not be running
+            on_error =lambda err:  self._msg_queue.put({"type": "_manager_offline"}),
         )
         self.manager_client.start()
+        self.after(6000, self._check_manager_heartbeat)
 
         self._build_layout()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -158,12 +164,18 @@ class ApexTraderGUI(ctk.CTk):
         self._root_frame = ctk.CTkFrame(self, fg_color=BASE, corner_radius=0)
         self._root_frame.pack(fill="both", expand=True)
 
-        cfg = self.config.load()
-        if self.config.is_setup_complete(cfg):
+        if self._is_manager_setup_complete():
             self.app_state.mark_setup_complete(True)
             self._show_main_ui()
         else:
             self._show_onboarding()
+
+    # ── Setup check ───────────────────────────────────────────────────────────
+
+    def _is_manager_setup_complete(self) -> bool:
+        """Setup is complete when the Manager has run at least once (api_token.txt exists)."""
+        from src.gui.manager_client import _TOKEN_PATH
+        return _TOKEN_PATH.exists()
 
     # ── Onboarding ────────────────────────────────────────────────────────────
 
@@ -183,6 +195,9 @@ class ApexTraderGUI(ctk.CTk):
     def _on_onboarding_complete(self) -> None:
         self.app_state.mark_setup_complete(True)
         self._show_main_ui()
+        # Start manager polling now that setup is done
+        if not self.manager_client._thread or not self.manager_client._thread.is_alive():
+            self.manager_client.start()
 
     # ── Main dashboard ────────────────────────────────────────────────────────
 
@@ -284,6 +299,20 @@ class ApexTraderGUI(ctk.CTk):
             fill="both", expand=True,
         )
 
+        # Manager restart button — shown when manager is offline
+        from src.gui.theme import DANGER_BG, DANGER_BORDER, RED
+        self._start_mgr_btn = ctk.CTkButton(
+            self._sidebar,
+            text="▶  Start Manager",
+            height=30,
+            fg_color=DANGER_BG, hover_color=DANGER_BORDER, text_color=RED,
+            border_width=1, border_color=DANGER_BORDER, corner_radius=4,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._on_sidebar_start_manager,
+        )
+        # Hidden until manager goes offline
+        self._start_mgr_btn.pack_forget()
+
         # Engine status badge at bottom
         _divider(self._sidebar)
         self._engine_badge = EngineStatusBadge(self._sidebar)
@@ -299,10 +328,13 @@ class ApexTraderGUI(ctk.CTk):
         from src.gui.pages.activity import ActivityPage
         from src.gui.pages.settings import SettingsPage
         from src.gui.pages.advanced import AdvancedPage
-        from src.gui.pages.agents   import AgentsPage
+        from src.gui.pages.agents   import AgentsPage, AddAgentPage
+        from src.gui.pages.manager  import ManagerPage
 
         self._pages: dict[str, ctk.CTkFrame] = {
             "Agents":   AgentsPage(self._content, self),
+            "Manager":  ManagerPage(self._content, self),
+            "AddAgent": AddAgentPage(self._content, self),
             "Home":     HomePage(self._content, self),
             "Engine":   EnginePage(self._content, self),
             "Platform": PlatformPage(self._content, self),
@@ -320,6 +352,9 @@ class ApexTraderGUI(ctk.CTk):
         for pname, page in self._pages.items():
             if pname == name:
                 page.grid(row=0, column=0, sticky="nsew")
+                cb = getattr(page, "on_navigate_to", None)
+                if callable(cb):
+                    cb()
             else:
                 page.grid_remove()
 
@@ -362,6 +397,7 @@ class ApexTraderGUI(ctk.CTk):
         self.ws.start()
 
         # Sidebar: show "← Fleet" button, hide Agents button, show agent pages
+        # Manager page stays visible in all modes.
         if hasattr(self, "_fleet_btn"):
             self._fleet_btn.pack(fill="x", padx=8, pady=(0, 4))
         for page, btn in self._nav_btns.items():
@@ -379,13 +415,13 @@ class ApexTraderGUI(ctk.CTk):
 
         self.ws.stop()
 
-        # Sidebar: hide "← Fleet" button, show Agents button, hide agent pages
+        # Sidebar: hide "← Fleet" button, show Agents + Manager, hide agent-only pages
         if hasattr(self, "_fleet_btn"):
             self._fleet_btn.pack_forget()
         for page, btn in self._nav_btns.items():
-            if page == "Agents":
+            if page in ("Agents", "Manager"):
                 btn.pack(fill="x", padx=8, pady=2)
-            else:
+            elif page in _AGENT_ONLY_PAGES:
                 btn.pack_forget()
 
         self._show_page("Agents")
@@ -393,8 +429,82 @@ class ApexTraderGUI(ctk.CTk):
     # ── Lifecycle badge ───────────────────────────────────────────────────────
 
     def _on_lifecycle_changed(self, lifecycle: EngineLifecycle = None, **_) -> None:
-        if lifecycle and hasattr(self, "_engine_badge"):
+        # In multi-agent mode the badge is owned by _apply_manager_online;
+        # only update via lifecycle if manager tracking hasn't kicked in yet.
+        if lifecycle and hasattr(self, "_engine_badge") and not self._manager_online:
             self._engine_badge.update(lifecycle)
+
+    # ── Manager reachability ──────────────────────────────────────────────────
+
+    def _apply_manager_online(self, online: bool) -> None:
+        if hasattr(self, "_engine_badge"):
+            self._engine_badge.set_manager_status(online)
+        if hasattr(self, "_start_mgr_btn"):
+            if online:
+                self._start_mgr_btn.pack_forget()
+            else:
+                self._start_mgr_btn.pack(fill="x", padx=8, pady=(0, 4),
+                                          before=self._engine_badge)
+        if hasattr(self, "_pages"):
+            agents_page = self._pages.get("Agents")
+            if agents_page and hasattr(agents_page, "set_manager_online"):
+                agents_page.set_manager_online(online)
+
+    def _on_sidebar_start_manager(self) -> None:
+        self._start_mgr_btn.configure(state="disabled", text="Starting…")
+        def _done(ok: bool) -> None:
+            def _apply():
+                self._start_mgr_btn.configure(
+                    state="normal",
+                    text="▶  Start Manager" if ok else "▶  Retry",
+                )
+            self.after(0, _apply)
+        self.restart_manager(on_done=_done)
+
+    def _check_manager_heartbeat(self) -> None:
+        import time as _time
+        if self._manager_online and (_time.time() - self._last_manager_contact) > 9:
+            self._manager_online = False
+            self._apply_manager_online(False)
+        # Also apply offline if we've never seen the manager and enough time has passed
+        elif not self._manager_online and not getattr(self, "_manager_offline_shown", False):
+            self._manager_offline_shown = True
+            self._apply_manager_online(False)
+        self.after(5000, self._check_manager_heartbeat)
+
+    def restart_manager(self, on_done=None) -> None:
+        """Try schtasks /Run first; fall back to install_manager.ps1 elevated."""
+        import subprocess
+        from src.gui.installer import InstallerService
+
+        def _run():
+            import time as _time
+            # 1. Try running the already-registered scheduled task (non-elevated).
+            result = subprocess.run(
+                ["schtasks", "/Run", "/TN", r"\Apex Quantel\AQ Manager"],
+                capture_output=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if result.returncode == 0:
+                # Wait up to 30 s for api_token.txt to appear.
+                from src.gui.manager_client import _TOKEN_PATH
+                deadline = _time.time() + 30
+                while _time.time() < deadline:
+                    if _TOKEN_PATH.exists():
+                        if on_done:
+                            self.after(0, lambda: on_done(True))
+                        return
+                    _time.sleep(1)
+
+            # 2. Task not registered or timed out — run the installer PS1.
+            svc = InstallerService()
+            def _notify(ok: bool, msg: str) -> None:
+                if on_done:
+                    self.after(0, lambda: on_done(ok))
+            svc.on_result = _notify
+            svc.install_manager_async()
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ── Service status ────────────────────────────────────────────────────────
 
@@ -438,6 +548,21 @@ class ApexTraderGUI(ctk.CTk):
 
         if t == "_manager_agents":
             self.manager_state.apply(payload)
+            import time as _time
+            self._last_manager_contact = _time.time()
+            if not self._manager_online:
+                self._manager_online = True
+                self._apply_manager_online(True)
+                self._sync_manager_license()
+            return
+
+        if t == "_manager_offline":
+            # Apply on every offline signal until manager comes online —
+            # ensures the initial offline state is shown even on first load.
+            if self._manager_online or not getattr(self, "_manager_offline_shown", False):
+                self._manager_online = False
+                self._manager_offline_shown = True
+                self._apply_manager_online(False)
             return
 
         if t == "_ws_connected":
@@ -483,6 +608,29 @@ class ApexTraderGUI(ctk.CTk):
         ):
             if hasattr(self, "_pages"):
                 _broadcast(self._pages, "on_signal_event", t, payload)
+
+    def _sync_manager_license(self) -> None:
+        """Copy the GUI-configured key into the manager's encrypted store once."""
+        if self._manager_license_sync_attempted:
+            return
+        self._manager_license_sync_attempted = True
+
+        key = str(self.config.get("gateway", "activation_key") or "").strip()
+        if not key:
+            return
+
+        def _on_info(info: dict) -> None:
+            if info.get("configured"):
+                return
+            self.manager_client.set_license_key(
+                key,
+                lambda result: logger.info(
+                    "Manager license sync %s",
+                    "completed" if result.get("valid") else "failed",
+                ),
+            )
+
+        self.manager_client.get_license_info(_on_info)
 
     def _tick_heartbeat(self) -> None:
         self.app_state.tick_heartbeat()

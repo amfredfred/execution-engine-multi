@@ -157,6 +157,7 @@ class InboundSignal:
     created_at: int
     htf_interval: str = ""
     ltf_interval: str = ""
+    broker: str = ""
     ltf_range: Optional[LtfRange] = None
     pending_at: Optional[int] = None
     triggered_at: Optional[int] = None
@@ -220,6 +221,7 @@ class InboundSignal:
             created_at=d["createdAt"],
             htf_interval=str(d.get("htfInterval") or d.get("htf_interval") or ""),
             ltf_interval=str(d.get("ltfInterval") or d.get("ltf_interval") or ""),
+            broker=str(d.get("broker") or ""),
             ltf_range=LtfRange.from_dict(d["ltfRange"]) if d.get("ltfRange") else None,
             pending_at=d.get("pendingAt"),
             triggered_at=triggered_at,
@@ -244,6 +246,77 @@ class InboundSignal:
             trade_opened_at=_optional_int(d, "tradeOpenedAt", "trade_opened_at"),
         )
 
+    def to_dict(self) -> dict:
+        """Serialize using the legacy signal.triggered wire contract."""
+        result = {
+            "id": self.id,
+            "symbol": self.symbol,
+            "direction": self.direction.value,
+            "status": self.status.value,
+            "entryPrice": self.entry_price,
+            "stopLoss": self.stop_loss,
+            "tp1": self.tp1,
+            "tp2": self.tp2,
+            "riskRewardRatio": self.risk_reward_ratio,
+            "riskPips": self.risk_pips,
+            "htfInterval": self.htf_interval,
+            "ltfInterval": self.ltf_interval,
+            "broker": self.broker,
+            "htfRange": {
+                "rangeHigh": self.htf_range.range_high,
+                "rangeLow": self.htf_range.range_low,
+                "bosDirection": self.htf_range.bos_direction.value,
+                "timestamp": self.htf_range.timestamp,
+                "brokenAt": self.htf_range.broken_at,
+                "tpLevel": self.htf_range.tp_level,
+                "midpoint": self.htf_range.midpoint,
+                "height": self.htf_range.height,
+                "htfCandleOpen": self.htf_range.htf_candle_open,
+                "htfCandleClose": self.htf_range.htf_candle_close,
+            },
+            "rejectionCandle": {
+                "open": self.rejection_candle.open,
+                "high": self.rejection_candle.high,
+                "low": self.rejection_candle.low,
+                "close": self.rejection_candle.close,
+                "timestamp": self.rejection_candle.timestamp,
+                "wickRatio": self.rejection_candle.wick_ratio,
+                "pattern": self.rejection_candle.pattern.value,
+                "wickTip": self.rejection_candle.wick_tip,
+            },
+            "createdAt": self.created_at,
+            "pendingAt": self.pending_at,
+            "triggeredAt": self.triggered_at,
+            "tp1HitAt": self.tp1_hit_at,
+            "tp2HitAt": self.tp2_hit_at,
+            "slHitAt": self.sl_hit_at,
+            "invalidatedAt": self.invalidated_at,
+            "expiredAt": self.expired_at,
+            "closedAt": self.closed_at,
+            "outcome": self.outcome,
+            "realizedRR": self.realized_rr,
+            "closePrice": self.close_price,
+            "setupCandleOpenAt": self.setup_candle_open_at,
+            "setupCandleCloseAt": self.setup_candle_close_at,
+            "detectedAt": self.detected_at,
+            "emittedAt": self.emitted_at,
+            "receivedAt": self.received_at,
+            "queuedAt": self.queued_at,
+            "executionStartedAt": self.execution_started_at,
+            "orderSentAt": self.order_sent_at,
+            "orderFilledAt": self.order_filled_at,
+            "tradeOpenedAt": self.trade_opened_at,
+        }
+        if self.ltf_range:
+            result["ltfRange"] = {
+                "rangeHigh": self.ltf_range.range_high,
+                "rangeLow": self.ltf_range.range_low,
+                "timestamp": self.ltf_range.timestamp,
+                "direction": self.ltf_range.direction.value,
+                "slLevel": self.ltf_range.sl_level,
+            }
+        return result
+
 
 def _optional_int(d: dict, *keys: str) -> Optional[int]:
     for key in keys:
@@ -252,7 +325,6 @@ def _optional_int(d: dict, *keys: str) -> Optional[int]:
             continue
         return int(value)
     return None
-
 
 
 

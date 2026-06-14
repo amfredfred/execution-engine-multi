@@ -91,21 +91,12 @@ hidden_imports = [
 # Collect every submodule in our src package
 hidden_imports += collect_submodules("src")
 
-# Collect all numpy submodules (covers _core, linalg, fft, random, etc.)
-hidden_imports += collect_submodules("numpy")
-
-# ---------------------------------------------------------------------------
-# customtkinter — use collect_all for complete coverage
-#   (hidden imports + data files + binaries in one call)
-# ---------------------------------------------------------------------------
-_ctk_data, _ctk_bin, _ctk_hi = collect_all("customtkinter")
-hidden_imports += _ctk_hi
-
-_dk_data, _dk_bin, _dk_hi = collect_all("darkdetect")
-hidden_imports += _dk_hi
-
-_pil_data, _pil_bin, _pil_hi = collect_all("PIL")
-hidden_imports += _pil_hi
+# Explicitly add pages that collect_submodules misses (import-time side-effects
+# or circular refs prevent auto-discovery at spec build time)
+hidden_imports += [
+    "src.gui.pages.agents",
+    "src.gui.pages.manager",
+]
 
 # ---------------------------------------------------------------------------
 # Data files
@@ -123,13 +114,9 @@ datas = [
 # Include the full tzdata IANA timezone database
 datas += collect_data_files("tzdata")
 
-# numpy data files (.pyd C extensions, .pyi stubs, etc.)
-datas += collect_data_files("numpy")
-
-# customtkinter / darkdetect / Pillow data files
-datas += _ctk_data
-datas += _dk_data
-datas += _pil_data
+# CustomTkinter themes are runtime data; package hooks handle its imports and
+# the binary dependencies for NumPy and Pillow.
+datas += collect_data_files("customtkinter")
 
 # ---------------------------------------------------------------------------
 # Analysis
@@ -143,7 +130,7 @@ _base_python_dir = sys.base_prefix
 a = Analysis(
     ["src/__main__.py"],
     pathex=[".", _base_python_dir],
-    binaries=_ctk_bin + _dk_bin + _pil_bin,
+    binaries=[],
     datas=datas,
     hiddenimports=hidden_imports,
     hookspath=[],

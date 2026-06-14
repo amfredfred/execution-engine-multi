@@ -2,7 +2,7 @@
 managed/client.py — ManagedAgentClient
 
 WebSocket client that connects from an agent subprocess to the manager's
-AgentChannel on port 8766.
+AgentChannel on port 8871.
 
 Responsibilities:
   • Send agent.hello on connect (token auth)
@@ -36,7 +36,7 @@ class ManagedAgentClient:
     def __init__(
         self,
         agent_id: str,
-        channel_url: str,     # ws://localhost:8766
+        channel_url: str,     # ws://localhost:8871
         token: str,
         container: "AppContainer",
     ) -> None:

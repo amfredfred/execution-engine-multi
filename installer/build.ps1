@@ -10,6 +10,12 @@ $ErrorActionPreference = "Stop"
 $InstallerDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EngineDir    = Split-Path -Parent $InstallerDir
 
+# Keep NumPy/OpenBLAS imports used by PyInstaller analysis within build-machine
+# memory limits. These values are inherited by PyInstaller's isolated workers.
+$env:OPENBLAS_NUM_THREADS = "1"
+$env:OMP_NUM_THREADS      = "1"
+$env:MKL_NUM_THREADS      = "1"
+
 Write-Host ""
 Write-Host "========================================"  -ForegroundColor Cyan
 Write-Host "  AQ Agent - Build Pipeline"         -ForegroundColor Cyan
@@ -58,20 +64,20 @@ if ($SkipPackage) {
 } else {
     Write-Host "[1/2] PyInstaller packaging..." -ForegroundColor Yellow
 
-    $pyi = Find-Exe @(
-        (Join-Path $EngineDir "venv\Scripts\pyinstaller.exe"),
-        (Join-Path $EngineDir ".venv\Scripts\pyinstaller.exe"),
-        "pyinstaller"
+    $python = Find-Exe @(
+        (Join-Path $EngineDir "venv\Scripts\python.exe"),
+        (Join-Path $EngineDir ".venv\Scripts\python.exe"),
+        "python"
     )
 
-    if (-not $pyi) {
+    if (-not $python) {
         Write-Host ""
-        Write-Host "  ERROR: pyinstaller not found." -ForegroundColor Red
+        Write-Host "  ERROR: Python environment not found." -ForegroundColor Red
         Write-Host "  Run:   venv\Scripts\pip install pyinstaller" -ForegroundColor Red
         exit 1
     }
 
-    Write-Host "      Using : $pyi" -ForegroundColor DarkGray
+    Write-Host "      Using : $python -m PyInstaller" -ForegroundColor DarkGray
 
     Push-Location $EngineDir
     try {
@@ -80,7 +86,7 @@ if ($SkipPackage) {
         $pyiArgs.Add("--noconfirm")
         if ($Clean) { $pyiArgs.Add("--clean") }
 
-        & $pyi $pyiArgs
+        & $python -m PyInstaller $pyiArgs
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  ERROR: PyInstaller exited with code $LASTEXITCODE" -ForegroundColor Red
             exit 1

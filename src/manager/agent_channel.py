@@ -1,7 +1,7 @@
 """
 manager/agent_channel.py — WebSocket server for agent ↔ manager communication.
 
-Port 8766.  Each agent subprocess connects here via ManagedAgentClient,
+Port 8871.  Each agent subprocess connects here via ManagedAgentClient,
 authenticates with a shared token, sends snapshots every 2 s, and receives
 commands (pause / resume / stop / emergency_stop) and signal.forward messages.
 """
@@ -34,7 +34,7 @@ class AgentChannel:
         self,
         registry: AgentRegistry,
         token: str,
-        port: int = 8766,
+        port: int = 8871,
     ) -> None:
         self._registry    = registry
         self._token       = token

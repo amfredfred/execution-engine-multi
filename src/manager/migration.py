@@ -73,13 +73,23 @@ class LegacySingleAgentMigration:
         symbols      = gateway.get("symbols") or ["XAUUSD"]
         activation_key = gateway.get("activation_key") or ""
 
-        # Store the master activation key at manager level
+        # Always store the master activation key at manager level when available
         if activation_key:
             from src.manager.secrets import ManagerSecretStore
             secrets = ManagerSecretStore(self._registry)
             existing = secrets.get_activation_key()
             if not existing:
                 secrets.set_activation_key(activation_key)
+
+        # In multi-agent fresh installs the legacy config has no MT5 credentials
+        # (only the activation key from onboarding).  Skip agent-0 creation so
+        # users start with a clean fleet and add agents manually.
+        if not mt5_login or not mt5_server or not terminal_path:
+            logger.info(
+                "Legacy config has no MT5 credentials — storing activation key "
+                "but skipping auto-creation of agent-0"
+            )
+            return
 
         # Build config overrides from the legacy file (strip secrets)
         overrides = {k: v for k, v in cfg.items() if k not in ("mt5", "gateway")}

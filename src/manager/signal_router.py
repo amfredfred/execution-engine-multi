@@ -9,6 +9,7 @@ RUNNING agent that subscribes to that symbol via AgentChannel.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from src.core.event_bus import EventBus
@@ -72,19 +73,32 @@ class ManagerSignalRouter:
             "ManagerSignalRouter: symbol set changed %s → %s",
             self._current_symbols, new_symbols,
         )
+        old_symbols = self._current_symbols
         self._current_symbols = new_symbols
 
         if self._consumer is None and new_symbols:
             self._start_consumer(new_symbols)
             return
 
-        if self._consumer and new_symbols != self._current_symbols:
+        if self._consumer and new_symbols != old_symbols:
             # Re-subscribe with new symbol set
             try:
                 self._consumer._symbols = list(new_symbols)
                 self._consumer._subscribe()
             except Exception as exc:
                 logger.warning("Failed to refresh gateway room subscription: %s", exc)
+
+    def set_activation_key(self, activation_key: str, active_agents: list["AgentRegistration"]) -> None:
+        """Reconnect the gateway consumer with a newly verified manager key."""
+        self._activation_key = activation_key
+        if self._consumer:
+            self._consumer.stop()
+            self._consumer = None
+        symbols = self._union_symbols(active_agents)
+        self._current_symbols = symbols
+        if symbols:
+            self._start_consumer(symbols)
+        logger.info("ManagerSignalRouter activation key updated")
 
     # ── Internal ──────────────────────────────────────────────────────────
 
@@ -101,7 +115,7 @@ class ManagerSignalRouter:
             ws_url=self._gateway_ws_url,
             activation_key=self._activation_key,
             symbols=list(symbols),
-            engine_id="manager",
+            engine_id="manager-main",
             engine_version=self._engine_version,
             room_ttl_seconds=600,
             account_login="manager",
@@ -129,6 +143,8 @@ class ManagerSignalRouter:
             agent_symbols = {s.upper() for s in (reg.symbols or [])}
             if signal.symbol.upper() not in agent_symbols:
                 continue
+            if signal.broker and not _broker_matches(signal.broker, reg.mt5_server):
+                continue
 
             sent = self._channel.forward_signal(reg.agent_id, signal_dict)
             if sent:
@@ -146,7 +162,8 @@ class ManagerSignalRouter:
             "Signal %s (%s) delivered to %d/%d eligible agent(s)",
             signal.id, signal.symbol, delivered,
             sum(1 for a in agents if a.status == AgentStatus.RUNNING and
-                signal.symbol.upper() in {s.upper() for s in (a.symbols or [])}),
+                signal.symbol.upper() in {s.upper() for s in (a.symbols or [])} and
+                (not signal.broker or _broker_matches(signal.broker, a.mt5_server))),
         )
 
     @staticmethod
@@ -164,3 +181,10 @@ def _signal_to_dict(signal) -> dict:
     if dataclasses.is_dataclass(signal):
         return dataclasses.asdict(signal)
     return {}
+
+
+def _broker_matches(broker: str, mt5_server: str | None) -> bool:
+    """Match signal profile names such as fundednext to MT5 server labels."""
+    normalized_broker = re.sub(r"[^a-z0-9]", "", broker.lower())
+    normalized_server = re.sub(r"[^a-z0-9]", "", (mt5_server or "").lower())
+    return bool(normalized_broker and normalized_broker in normalized_server)

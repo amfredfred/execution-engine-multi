@@ -58,7 +58,7 @@ class ProcessSupervisor:
         env["MT5_PASSWORD"]         = mt5_password
         env["APEX_ACTIVATION_KEY"]  = activation_key
         env["AGENT_CHANNEL_TOKEN"]  = channel_token
-        env["AGENT_CHANNEL_PORT"]   = "8766"
+        env["AGENT_CHANNEL_PORT"]   = "8871"
 
         # Open log file for subprocess stdout/stderr
         logs_dir = Path(reg.data_dir) / "logs"

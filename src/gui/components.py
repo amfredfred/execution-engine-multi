@@ -531,6 +531,16 @@ class EngineStatusBadge(ctk.CTkFrame):
         brd = _TONE_BORDER.get(lifecycle.color_key, LINE)
         self.configure(fg_color=bg, border_color=brd)
 
+    def set_manager_status(self, online: bool) -> None:
+        """Override badge to show manager connectivity instead of legacy service status."""
+        from src.gui.theme import GREEN, RED, SUCCESS_BG, SUCCESS_BORDER, DANGER_BG, DANGER_BORDER
+        if online:
+            self._lbl.configure(text="●  Manager running", text_color=GREEN)
+            self.configure(fg_color=SUCCESS_BG, border_color=SUCCESS_BORDER)
+        else:
+            self._lbl.configure(text="○  Manager offline", text_color=RED)
+            self.configure(fg_color=DANGER_BG, border_color=DANGER_BORDER)
+
 
 # ── LabeledField ─────────────────────────────────────────────────────────────
 

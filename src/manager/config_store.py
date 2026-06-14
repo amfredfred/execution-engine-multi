@@ -55,7 +55,7 @@ class AgentConfigStore:
                 "monitoring_port": reg.monitoring_port,
             },
             "manager": {
-                "channel_port": 8766,
+                "channel_port": 8871,
             },
         }
 

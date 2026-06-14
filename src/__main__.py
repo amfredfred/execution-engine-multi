@@ -238,7 +238,7 @@ def _agent_main(agent_id: str) -> None:
     container = build_container(cfg)
     container.trade_repo.init()
 
-    channel_port = int(os.environ.get("AGENT_CHANNEL_PORT", "8766"))
+    channel_port = int(os.environ.get("AGENT_CHANNEL_PORT", "8871"))
     channel_token = os.environ.get("AGENT_CHANNEL_TOKEN", "")
     managed_client = ManagedAgentClient(
         agent_id=agent_id,

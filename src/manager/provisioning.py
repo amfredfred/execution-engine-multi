@@ -31,6 +31,10 @@ class SlotLimitError(Exception):
     """Raised when the license has no remaining agent slots."""
 
 
+class LicensePreflightError(Exception):
+    """Raised when a license key cannot be verified with the gateway."""
+
+
 class AgentProvisioner:
     def __init__(
         self,
@@ -112,6 +116,101 @@ class AgentProvisioner:
 
         logger.info("Provisioned agent %s (%s) on port %d", agent_id, display_name, port)
         return reg
+
+    def get_license_info(self, force: bool = False) -> dict:
+        """
+        Return license metadata from the gateway (slots, symbols).
+        Caches the result in device_state for 10 minutes to avoid
+        hammering the gateway on every AddAgent page load.
+        """
+        import json
+        import time
+
+        _CACHE_TTL = 600   # seconds
+
+        raw = self._registry.load_device_state("license_info")
+        if raw and not force:
+            try:
+                cached = json.loads(raw)
+                if time.time() - cached.get("_cached_at", 0) < _CACHE_TTL:
+                    return cached
+            except Exception:
+                pass
+
+        activation_key = self._secrets.get_activation_key()
+        if not activation_key:
+            return {
+                "configured": False,
+                "valid": False,
+                "symbols": [],
+                "error": "No manager license key configured",
+            }
+        if not self._gateway_http_url:
+            return {
+                "configured": True,
+                "valid": False,
+                "symbols": [],
+                "error": "Gateway HTTP URL is not configured",
+            }
+
+        try:
+            return self.preflight_license(activation_key, cache=True)
+        except Exception as exc:
+            logger.warning("License info fetch failed: %s", exc)
+            return {
+                "configured": True,
+                "valid": False,
+                "symbols": [],
+                "error": str(exc),
+            }
+
+    def preflight_license(self, activation_key: str, cache: bool = False) -> dict:
+        """Verify a license key without changing the stored manager key."""
+        activation_key = activation_key.strip()
+        if not activation_key:
+            raise LicensePreflightError("License key is required")
+        if not self._gateway_http_url:
+            raise LicensePreflightError("Gateway HTTP URL is not configured")
+
+        try:
+            body = json.dumps({"activation_key": activation_key}).encode()
+            req = urllib.request.Request(
+                f"{self._gateway_http_url}/activation/preflight",
+                data=body,
+                headers={"Content-Type": "application/json", "User-Agent": "AQAgent/1.0"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = json.loads(exc.read()).get("message")
+            except Exception:
+                detail = None
+            raise LicensePreflightError(detail or f"Gateway returned HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise LicensePreflightError(f"Gateway unreachable: {exc.reason}") from exc
+        except Exception as exc:
+            raise LicensePreflightError(f"License preflight failed: {exc}") from exc
+
+        data["configured"] = bool(self._secrets.get_activation_key())
+        data["error"] = None if data.get("valid") else "License key is invalid"
+        if cache and data.get("valid"):
+            data["_cached_at"] = time.time()
+            self._registry.save_device_state("license_info", json.dumps(data))
+        return data
+
+    def set_activation_key(self, activation_key: str) -> dict:
+        """Verify and persist a replacement manager license key."""
+        info = self.preflight_license(activation_key)
+        if not info.get("valid"):
+            raise LicensePreflightError("License key is invalid")
+
+        self._secrets.set_activation_key(activation_key.strip())
+        info["configured"] = True
+        info["_cached_at"] = time.time()
+        self._registry.save_device_state("license_info", json.dumps(info))
+        return info
 
     def deprovision(self, agent_id: str) -> None:
         reg = self._registry.get_agent(agent_id)

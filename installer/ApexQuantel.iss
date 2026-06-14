@@ -1,22 +1,21 @@
-; ApexQuantel.iss — Inno Setup installer for AQ Agent
+; ApexQuantel.iss — Inno Setup installer for AQ Agent (multi-agent edition)
 ;
 ; What this installer does:
 ;   1. Copies the packaged AQ Agent files to Program Files
-;   2. Creates a Start Menu group and optional desktop shortcut
-;   3. Launches the control panel when finished (user then clicks Install AQ Agent)
+;   2. Creates ProgramData directories for the Manager and agent accounts
+;   3. Registers the AQ Manager as a logon-triggered scheduled task
+;   4. Creates Start Menu shortcuts and an optional desktop shortcut
+;   5. Offers to launch the control panel when finished
 ;
-; All first-run configuration (license key, MT5 details, risk settings)
-; is handled by the app's built-in onboarding wizard on first launch.
-;
-; Build (from execution-engine\ dir):
+; Build (from execution-engine-multi\ dir):
 ;   powershell -ExecutionPolicy Bypass -File installer\build.ps1
+;
+; Version is passed from build.ps1 via /DMyAppVersion=x.y.z
 
 #define MyAppName      "AQ Agent"
 #define MyAppPublisher "Apex Quantel"
 #define MyAppURL       "https://app.somicast.com"
 #define MyAppExeName   "apex-quant-trader-agent\apex-quant-trader-agent.exe"
-; MyAppVersion is passed from build.ps1 via /DMyAppVersion=x.y.z
-; Fallback so the .iss can still be opened directly in the Inno Setup IDE
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
 #endif
@@ -38,7 +37,7 @@ AllowNoIcons=yes
 OutputDir=Output
 OutputBaseFilename=AQAgentSetup
 SetupIconFile=assets\icon.ico
-Compression=lzma2/ultra64
+Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
@@ -66,8 +65,17 @@ Name: "desktopicon"; \
 ; ============================================================================
 [Dirs]
 ; ============================================================================
-Name: "{app}\data";  Permissions: authusers-modify
-Name: "{app}\logs";  Permissions: authusers-modify
+; Per-install writable dirs under {app}
+Name: "{app}\data";                   Permissions: authusers-modify
+Name: "{app}\logs";                   Permissions: authusers-modify
+
+; ProgramData — shared data store for Manager + all agents
+; Permissions: authusers-modify lets the task-scheduler process write without elevation
+Name: "{commonappdata}\Apex Quantel";                         Permissions: authusers-modify
+Name: "{commonappdata}\Apex Quantel\Multi";                   Permissions: authusers-modify
+Name: "{commonappdata}\Apex Quantel\Multi\manager";           Permissions: authusers-modify
+Name: "{commonappdata}\Apex Quantel\Multi\manager\logs";      Permissions: authusers-modify
+Name: "{commonappdata}\Apex Quantel\Multi\agents";            Permissions: authusers-modify
 
 ; ============================================================================
 [Files]
@@ -80,13 +88,18 @@ Source: "..\dist\apex-quant-trader-agent\*"; \
 ; Version stamp
 Source: "..\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 
-; Task Scheduler installer script (used by the app's Install AQ Agent button)
+; Manager task installer  (runs on install/uninstall via [Run] / [UninstallRun])
+Source: "..\install_manager.ps1"; DestDir: "{app}"; Flags: ignoreversion
+
+; Legacy single-agent task installer (kept for users running --headless mode)
 Source: "..\install_service.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
-; Utility scripts
-Source: "..\scripts\update.ps1";         DestDir: "{app}\scripts"; \
+; Optional utility scripts
+Source: "..\scripts\update.ps1"; \
+    DestDir: "{app}\scripts"; \
     Flags: ignoreversion skipifsourcedoesntexist
-Source: "..\scripts\support-bundle.ps1"; DestDir: "{app}\scripts"; \
+Source: "..\scripts\support-bundle.ps1"; \
+    DestDir: "{app}\scripts"; \
     Flags: ignoreversion skipifsourcedoesntexist
 
 ; ============================================================================
@@ -100,7 +113,7 @@ Name: "{group}\AQ Agent"; \
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; \
     Filename: "{uninstallexe}"
 
-; Desktop shortcut (optional)
+; Desktop shortcut (optional task)
 Name: "{commondesktop}\AQ Agent"; \
     Filename: "{app}\{#MyAppExeName}"; \
     WorkingDir: "{app}"; \
@@ -110,8 +123,14 @@ Name: "{commondesktop}\AQ Agent"; \
 ; ============================================================================
 [Run]
 ; ============================================================================
-; Offer to launch the control panel from the Finish page (ticked by default).
-; shellexec lets Windows honour the requireAdministrator manifest.
+
+; Register + start the AQ Manager scheduled task — always required
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
+    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\install_manager.ps1"" -Action install"; \
+    StatusMsg: "Registering AQ Manager service..."; \
+    Flags: runhidden waituntilterminated
+
+; Offer to launch the GUI from the Finish page
 Filename: "{app}\{#MyAppExeName}"; \
     Description: "Launch AQ Agent"; \
     Flags: postinstall nowait skipifsilent shellexec; \
@@ -120,16 +139,27 @@ Filename: "{app}\{#MyAppExeName}"; \
 ; ============================================================================
 [UninstallRun]
 ; ============================================================================
-; Remove the scheduled task on uninstall
+
+; Stop and remove the AQ Manager scheduled task
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
+    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\install_manager.ps1"" -Action uninstall"; \
+    RunOnceId: "RemoveManagerTask"; \
+    Flags: runhidden
+
+; Stop and remove the legacy single-agent task (if installed)
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
     Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\install_service.ps1"" -Action uninstall"; \
-    RunOnceId: "RemoveTask"; \
+    RunOnceId: "RemoveLegacyTask"; \
     Flags: runhidden
 
 ; ============================================================================
 [UninstallDelete]
 ; ============================================================================
+; Remove runtime artefacts written by the app
 Type: files;          Name: "{app}\config.yaml"
 Type: filesandordirs; Name: "{app}\data"
 Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}\__pycache__"
+; NOTE: {commonappdata}\Apex Quantel\Multi\ is intentionally NOT deleted on
+; uninstall — it contains the agent registry, trade history, and user config.
+; Users can delete it manually if they want a clean slate.

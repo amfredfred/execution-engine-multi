@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import secrets as _secrets
-import sys
 from pathlib import Path
 
 from src.manager.agent_channel import AgentChannel
@@ -34,8 +33,8 @@ class ManagerRuntime:
         self,
         storage_path: str,
         agents_data_dir: str,
-        api_port: int = 8765,
-        channel_port: int = 8766,
+        api_port: int = 8870,
+        channel_port: int = 8871,
         legacy_config_path: str = "",
         gateway_ws_url: str = "",
         gateway_http_url: str = "",
@@ -43,6 +42,7 @@ class ManagerRuntime:
     ) -> None:
         # ── Registry + Secrets ────────────────────────────────────────────
         self.registry = AgentRegistry(storage_path)
+        self.registry.init()
         self.secrets  = ManagerSecretStore(self.registry)
 
         # ── Config / Discovery / Provisioning ─────────────────────────────
@@ -110,6 +110,7 @@ class ManagerRuntime:
             token=api_token,
             port=api_port,
             storage_path=storage_path,
+            on_activation_key_changed=self._on_activation_key_changed,
         )
 
         # ── Reconciliation + Migration ────────────────────────────────────
@@ -123,26 +124,23 @@ class ManagerRuntime:
     def start(self) -> None:
         logger.info("ManagerRuntime starting")
 
-        # 1. Init DB schema
-        self.registry.init()
-
-        # 2. Clean up stale state from previous run
+        # 1. Clean up stale state from previous run
         self.reconciler.run()
 
-        # 3. Import legacy single-agent config if this is a fresh install
+        # 2. Import legacy single-agent config if this is a fresh install
         self.migrator.run_if_needed()
 
-        # 4. Start AgentChannel WS server
+        # 3. Start AgentChannel WS server
         self.channel.start()
 
-        # 5. Start gateway signal router
+        # 4. Start gateway signal router
         active_agents = self.registry.list_agents()
         self.signal_router.start(active_agents)
 
-        # 6. Start REST API
+        # 5. Start REST API
         self.api.start()
 
-        # 7. Start desired-state reconciliation loop
+        # 6. Start desired-state reconciliation loop
         self.desired.start()
 
         logger.info("ManagerRuntime online")
@@ -165,6 +163,10 @@ class ManagerRuntime:
         """Called by OperationRunner after provision/deprovision."""
         active_agents = self.registry.list_agents()
         self.signal_router.refresh_rooms(active_agents)
+
+    def _on_activation_key_changed(self, activation_key: str) -> None:
+        """Reconnect shared gateway signaling after the manager key changes."""
+        self.signal_router.set_activation_key(activation_key, self.registry.list_agents())
 
     # ── Token bootstrap ───────────────────────────────────────────────────
 
