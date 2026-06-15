@@ -154,6 +154,11 @@ class WorkerEventClient:
     def _build_snapshot(self) -> dict:
         c = self._container
         try:
+            telemetry = c.signal_consumer.build_metrics_snapshot()
+        except Exception:
+            logger.exception("Failed to build canonical execution snapshot")
+            telemetry = {}
+        try:
             acct = c.mt5_positions.get_account_info()
             balance: float | None = acct.balance
             equity: float | None = acct.equity
@@ -164,18 +169,7 @@ class WorkerEventClient:
             mt5_ok = c.mt5_client.is_connected()
 
         open_trades = c.position_store.get_open_trades()
-        lt = c.loss_tracker.stats()
 
-        telemetry = {
-            "connected": mt5_ok,
-            "metrics": {
-                "balance": balance,
-                "equity": equity,
-                "open_trades": len(open_trades),
-                "daily_loss_pct": lt.get("daily_loss_pct", 0.0),
-                "daily_budget": lt.get("daily_budget", 0.0),
-            },
-        }
         status = (
             "RUNNING"
             if c.runtime_ready.is_set()

@@ -8,7 +8,8 @@ import pytest
 
 from manager.app.config_revisions import ConfigRevisionService
 from manager.app.event_hub import EngineEventHub, _validate_event_sequence
-from manager.app.models import AgentRegistration, AgentStatus
+from manager.app.gateway_connector import GatewayConnector
+from manager.app.models import AgentRegistration, AgentSnapshot, AgentStatus
 from manager.app.registry import AgentRegistry
 from src.runtime.contracts import (
     EngineCommand,
@@ -18,6 +19,7 @@ from src.runtime.contracts import (
     MAX_ENVELOPE_AGE_MS,
     MAX_WIRE_BYTES,
 )
+from src.app.bootstrap import bootstrap
 from src.worker.event_client import WorkerEventClient
 
 
@@ -58,6 +60,26 @@ def test_command_and_event_contracts_round_trip() -> None:
     assert EngineEvent.from_wire(event.to_wire()) == event
 
 
+def test_headless_worker_bootstrap_wires_remote_snapshot_provider() -> None:
+    container = MagicMock()
+    config = MagicMock()
+    config.monitoring_port = 8081
+
+    with (
+        patch("src.infra.ui_bridge.UIBridge") as bridge_type,
+        patch("src.app.bootstrap.metrics.init_db"),
+        patch("src.app.bootstrap.threading.Thread"),
+    ):
+        bridge = bridge_type.return_value
+        bootstrap(container, config, expose_local_ui=False)
+
+    assert container.ui_bridge is bridge
+    container.signal_consumer.set_snapshot_provider.assert_called_once_with(
+        bridge.build_remote_snapshot
+    )
+    bridge.start.assert_not_called()
+
+
 def test_event_hub_receives_snapshot_and_sends_command() -> None:
     registry = MagicMock()
     registry.get_agent.return_value = _registration()
@@ -78,13 +100,23 @@ def test_event_hub_receives_snapshot_and_sends_command() -> None:
         "engine-1",
         3,
         EngineEventType.ENGINE_SNAPSHOT,
-        {"status": "RUNNING", "balance": 1000, "telemetry": {"metrics": {"balance": 1000}}},
+        {
+            "status": "RUNNING",
+            "balance": 1000,
+            "telemetry": {
+                "metrics": {"balance": 1000},
+                "trades": [{"symbol": "XAUUSD"}],
+            },
+        },
     ))
     deadline = time.time() + 2
     while hub.get_snapshot("engine-1") is None and time.time() < deadline:
         time.sleep(0.01)
 
     assert hub.get_snapshot("engine-1").balance == 1000
+    assert hub.get_snapshot("engine-1").telemetry["trades"] == [
+        {"symbol": "XAUUSD"}
+    ]
     assert hub.deliver_signal("engine-1", {"id": "signal-1"})
     command = EngineCommand.from_wire(json.loads(reader.readline()))
     assert command.command_type == EngineCommandType.SIGNAL_DELIVER
@@ -389,6 +421,58 @@ def test_worker_snapshot_reports_starting_degraded_and_running(tmp_path: Path) -
     assert client._build_snapshot()["status"] == "DEGRADED"
     container.runtime_ready.set()
     assert client._build_snapshot()["status"] == "RUNNING"
+
+
+def test_worker_snapshot_carries_canonical_telemetry(tmp_path: Path) -> None:
+    container = MagicMock()
+    container.runtime_ready = __import__("threading").Event()
+    container.runtime_error = None
+    container.signal_consumer.build_metrics_snapshot.return_value = {
+        "connected": True,
+        "engine": {"status": "RUNNING"},
+        "metrics": {"balance": 1000, "daily_pnl": 25},
+        "trades": [{"symbol": "XAUUSD"}],
+        "riskGuards": [{"id": "guard1"}],
+    }
+    container.mt5_positions.get_account_info.side_effect = RuntimeError("offline")
+    container.mt5_client.is_connected.return_value = False
+    container.position_store.get_open_trades.return_value = []
+    container.loss_tracker.stats.return_value = {}
+    client = WorkerEventClient(
+        "engine-1", "127.0.0.1", 8871, "secret", container,
+        123, "Broker", str(tmp_path),
+    )
+
+    assert client._build_snapshot()["telemetry"] == {
+        "connected": True,
+        "engine": {"status": "RUNNING"},
+        "metrics": {"balance": 1000, "daily_pnl": 25},
+        "trades": [{"symbol": "XAUUSD"}],
+        "riskGuards": [{"id": "guard1"}],
+    }
+
+
+def test_manager_sends_complete_telemetry_to_gateway() -> None:
+    registry = MagicMock()
+    registry.get_agent.return_value = _registration()
+    connector = GatewayConnector("", MagicMock(), registry)
+    connector._send = MagicMock()
+    telemetry = {
+        "connected": True,
+        "engine": {"status": "RUNNING"},
+        "metrics": {"balance": 1000, "daily_pnl": 25},
+        "trades": [{"symbol": "XAUUSD"}],
+        "riskGuards": [{"id": "guard1"}],
+    }
+    snapshot = AgentSnapshot(
+        "engine-1", AgentStatus.RUNNING, True, 123, "Broker",
+        1000, 1000, 1, True, 10, 1, telemetry,
+    )
+
+    connector._send_agent_snapshot("engine-1", snapshot)
+
+    assert connector._send.call_args.args[0] == "manager.agent.snapshot"
+    assert connector._send.call_args.args[1]["metrics"] == telemetry
 
 
 def test_event_hub_rejects_incompatible_worker_revision() -> None:

@@ -158,6 +158,10 @@ class SignalConsumer:
     def set_snapshot_provider(self, provider: Callable[[], dict]) -> None:
         self._snapshot_provider = provider
 
+    def build_metrics_snapshot(self) -> dict:
+        """Build the canonical execution snapshot for direct or managed transport."""
+        return self._snapshot_provider() if self._snapshot_provider else {}
+
     def set_execution_event_sink(self, sink: Callable[[str, dict], None]) -> None:
         """Route execution events through a manager-owned connection."""
         self._execution_event_sink = sink

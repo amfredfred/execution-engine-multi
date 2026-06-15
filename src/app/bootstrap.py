@@ -52,13 +52,13 @@ def bootstrap(
         lambda state: container.db.save_device_state("risk_state", state)
     )
 
-    # ── UIBridge (GUI-only mode — workers use IPC, not UIBridge) ─────────────
+    # UIBridge owns the canonical snapshot builder; workers keep it headless.
+    from src.infra.ui_bridge import UIBridge  # local import avoids circular dep
+    container.ui_bridge = UIBridge(container, config, port=config.monitoring_port)
+    container.signal_consumer.set_snapshot_provider(
+        container.ui_bridge.build_remote_snapshot
+    )
     if expose_local_ui:
-        from src.infra.ui_bridge import UIBridge  # local import avoids circular dep
-        container.ui_bridge = UIBridge(container, config, port=config.monitoring_port)
-        container.signal_consumer.set_snapshot_provider(
-            container.ui_bridge.build_remote_snapshot
-        )
         container.ui_bridge.start()
     _wire_commands(container)
 
