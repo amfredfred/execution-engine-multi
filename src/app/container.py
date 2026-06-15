@@ -52,7 +52,7 @@ class AppContainer:
     cluster_tracker: ClusterRiskTracker
     equity_throttle: EquityThrottleTracker
     ui_bridge: "UIBridge | None" = None
-    managed_client: "ManagedAgentClient | None" = None
+    worker_events: "WorkerEventClient | None" = None
 
 
 def build_container(config: AppConfig) -> AppContainer:

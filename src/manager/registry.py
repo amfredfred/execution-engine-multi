@@ -97,6 +97,24 @@ class AgentRegistry:
                     key     TEXT PRIMARY KEY,
                     value   TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS config_revisions (
+                    agent_id       TEXT NOT NULL,
+                    revision       INTEGER NOT NULL,
+                    config_json    TEXT NOT NULL,
+                    checksum       TEXT NOT NULL,
+                    status         TEXT NOT NULL,
+                    error          TEXT,
+                    created_at     INTEGER NOT NULL,
+                    activated_at   INTEGER,
+                    PRIMARY KEY (agent_id, revision)
+                );
+
+                CREATE TABLE IF NOT EXISTS processed_worker_events (
+                    event_id       TEXT PRIMARY KEY,
+                    agent_id       TEXT NOT NULL,
+                    processed_at   INTEGER NOT NULL
+                );
             """)
         logger.info("AgentRegistry initialised at %s", self._db_path)
 
@@ -151,6 +169,11 @@ class AgentRegistry:
                 "SELECT * FROM agents ORDER BY created_at"
             ).fetchall()
         return [self._row_to_agent(r) for r in rows]
+
+    def delete_agent(self, agent_id: str) -> None:
+        """Delete an agent registration after its process and leases are gone."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM agents WHERE agent_id=?", (agent_id,))
 
     def set_agent_status(
         self,
@@ -300,6 +323,60 @@ class AgentRegistry:
             conn.execute(
                 "INSERT INTO manager_events (event, agent_id, payload_json, created_at) VALUES (?,?,?,?)",
                 (event, agent_id, json.dumps(payload), _now_ms()),
+            )
+
+    def create_config_revision(
+        self, agent_id: str, config: dict, checksum: str,
+    ) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(revision), 0) + 1 FROM config_revisions WHERE agent_id=?",
+                (agent_id,),
+            ).fetchone()
+            revision = int(row[0])
+            conn.execute(
+                """INSERT INTO config_revisions
+                   (agent_id, revision, config_json, checksum, status, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (agent_id, revision, json.dumps(config), checksum, "desired", _now_ms()),
+            )
+        return revision
+
+    def latest_desired_config_revision(self, agent_id: str) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT revision FROM config_revisions
+                   WHERE agent_id=? AND status='desired'
+                   ORDER BY revision DESC LIMIT 1""",
+                (agent_id,),
+            ).fetchone()
+        return int(row[0]) if row else None
+
+    def activate_config_revision(self, agent_id: str, revision: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE config_revisions SET status='superseded' WHERE agent_id=? AND status='active'",
+                (agent_id,),
+            )
+            conn.execute(
+                """UPDATE config_revisions SET status='active', activated_at=?
+                   WHERE agent_id=? AND revision=?""",
+                (_now_ms(), agent_id, revision),
+            )
+
+    def worker_event_processed(self, event_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM processed_worker_events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+        return row is not None
+
+    def record_worker_event(self, event_id: str, agent_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO processed_worker_events VALUES (?,?,?)",
+                (event_id, agent_id, _now_ms()),
             )
 
     # ── Device state (KV) ─────────────────────────────────────────────────

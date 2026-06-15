@@ -19,7 +19,7 @@ EngineStatusBadge   — Compact pill showing EngineLifecycle
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable, Optional
 
 import customtkinter as ctk
 
@@ -32,10 +32,6 @@ from src.gui.theme import (
     INFO_BG, INFO_BORDER,
     Tone,
 )
-
-if TYPE_CHECKING:
-    from src.gui.state import EngineLifecycle, ReadinessIssue
-
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
 

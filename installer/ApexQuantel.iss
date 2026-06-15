@@ -91,9 +91,6 @@ Source: "..\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; Manager task installer  (runs on install/uninstall via [Run] / [UninstallRun])
 Source: "..\install_manager.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
-; Legacy single-agent task installer (kept for users running --headless mode)
-Source: "..\install_service.ps1"; DestDir: "{app}"; Flags: ignoreversion
-
 ; Optional utility scripts
 Source: "..\scripts\update.ps1"; \
     DestDir: "{app}\scripts"; \
@@ -144,12 +141,6 @@ Filename: "{app}\{#MyAppExeName}"; \
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
     Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\install_manager.ps1"" -Action uninstall"; \
     RunOnceId: "RemoveManagerTask"; \
-    Flags: runhidden
-
-; Stop and remove the legacy single-agent task (if installed)
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -NonInteractive -File ""{app}\install_service.ps1"" -Action uninstall"; \
-    RunOnceId: "RemoveLegacyTask"; \
     Flags: runhidden
 
 ; ============================================================================

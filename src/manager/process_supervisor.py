@@ -29,11 +29,13 @@ class ProcessSupervisor:
         registry: AgentRegistry,
         secrets: ManagerSecretStore,
         src_root: str,
+        ipc_port: int = 8871,
         on_agent_stopped: Callable[[str], None] | None = None,
     ) -> None:
         self._registry  = registry
         self._secrets   = secrets
         self._src_root  = src_root
+        self._ipc_port  = ipc_port
         self._on_stopped = on_agent_stopped or (lambda _: None)
         self._procs: dict[str, subprocess.Popen] = {}
         self._lock = threading.Lock()
@@ -53,12 +55,12 @@ class ProcessSupervisor:
 
         mt5_password = self._secrets.get_secret(agent_id, "mt5_password") or ""
         activation_key = self._secrets.get_activation_key() or ""
-        channel_token = self._secrets.get_channel_token() or ""
+        ipc_token = self._secrets.get_ipc_token() or ""
 
         env["MT5_PASSWORD"]         = mt5_password
         env["APEX_ACTIVATION_KEY"]  = activation_key
-        env["AGENT_CHANNEL_TOKEN"]  = channel_token
-        env["AGENT_CHANNEL_PORT"]   = "8871"
+        env["ENGINE_IPC_TOKEN"]     = ipc_token
+        env["ENGINE_IPC_PORT"]      = str(self._ipc_port)
 
         # Open log file for subprocess stdout/stderr
         logs_dir = Path(reg.data_dir) / "logs"
@@ -102,6 +104,11 @@ class ProcessSupervisor:
             proc = self._procs.get(agent_id)
 
         if not proc or proc.poll() is not None:
+            reg = self._registry.get_agent(agent_id)
+            if reg and reg.pid:
+                self._terminate_pid(reg.pid, force)
+                self._registry.set_agent_status(agent_id, AgentStatus.STOPPED, pid=None)
+                return
             logger.debug("Agent %s is not running; skipping terminate", agent_id)
             self._registry.set_agent_status(agent_id, AgentStatus.STOPPED, pid=None)
             return
@@ -120,7 +127,10 @@ class ProcessSupervisor:
     def is_alive(self, agent_id: str) -> bool:
         with self._lock:
             proc = self._procs.get(agent_id)
-        return proc is not None and proc.poll() is None
+        if proc is not None and proc.poll() is None:
+            return True
+        reg = self._registry.get_agent(agent_id)
+        return bool(reg and reg.pid and _pid_is_alive(reg.pid))
 
     def get_pid(self, agent_id: str) -> int | None:
         with self._lock:
@@ -140,6 +150,18 @@ class ProcessSupervisor:
             logger.info("Killed orphan process pid=%d", pid)
         except Exception as exc:
             logger.debug("Could not kill orphan pid=%d: %s", pid, exc)
+
+    def _terminate_pid(self, pid: int, force: bool) -> None:
+        try:
+            if sys.platform == "win32":
+                command = ["taskkill", "/PID", str(pid)]
+                if force:
+                    command.insert(1, "/F")
+                subprocess.run(command, capture_output=True, timeout=10)
+            else:
+                os.kill(pid, 9 if force else 15)
+        except Exception as exc:
+            logger.debug("Could not terminate adopted worker pid=%d: %s", pid, exc)
 
     # ── Internal ──────────────────────────────────────────────────────────
 
@@ -165,3 +187,15 @@ class ProcessSupervisor:
         )
         logger.info("Agent %s exited (exit_code=%d)", agent_id, exit_code)
         self._on_stopped(agent_id)
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False

@@ -105,6 +105,7 @@ class SignalConsumer:
         self._heartbeat_sequence = 0
         self._metrics_subscribed = threading.Event()
         self._snapshot_provider: Callable[[], dict] | None = None
+        self._execution_event_sink: Callable[[str, dict], None] | None = None
         self._metrics_thread: threading.Thread | None = None
         self._hello_message_id: str | None = None
         self._activation_message_id: str | None = None
@@ -156,6 +157,10 @@ class SignalConsumer:
 
     def set_snapshot_provider(self, provider: Callable[[], dict]) -> None:
         self._snapshot_provider = provider
+
+    def set_execution_event_sink(self, sink: Callable[[str, dict], None]) -> None:
+        """Route execution events through a manager-owned connection."""
+        self._execution_event_sink = sink
 
     def set_command_callbacks(
         self,
@@ -346,6 +351,9 @@ class SignalConsumer:
 
         Silently skips if the engine is not yet activated (no WS connection).
         """
+        if self._execution_event_sink:
+            self._execution_event_sink(event_type, data)
+            return
         if not self._activated.is_set():
             return
         self._send("execution.event", {

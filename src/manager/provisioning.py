@@ -223,9 +223,8 @@ class AgentProvisioner:
         # Remove per-agent secrets
         self._secrets.delete_agent_secrets(agent_id)
 
-        # Mark as STOPPED (preserve history row)
-        self._registry.set_agent_status(agent_id, AgentStatus.STOPPED, pid=None)
-        self._registry.set_desired_status(agent_id, "stopped")
+        # Operations and manager events retain the historical audit trail.
+        self._registry.delete_agent(agent_id)
         self._registry.emit_event("agent.deprovisioned", agent_id, {})
 
         logger.info("Deprovisioned agent %s", agent_id)

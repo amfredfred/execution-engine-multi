@@ -54,9 +54,6 @@ class AgentConfigStore:
                 "storage_path":    reg.data_dir,
                 "monitoring_port": reg.monitoring_port,
             },
-            "manager": {
-                "channel_port": 8871,
-            },
         }
 
         if user_overrides:
@@ -83,15 +80,21 @@ class AgentConfigStore:
             return yaml.safe_load(fh) or {}
 
     def update_agent_config(self, reg: AgentRegistration, patch: dict) -> None:
-        current = self.read_agent_config(reg)
-        merged  = _deep_merge(current, patch)
+        merged = self.preview_agent_config(reg, patch)
+        self.write_config_document(reg, merged)
+
+    def preview_agent_config(self, reg: AgentRegistration, patch: dict) -> dict:
+        merged = _deep_merge(self.read_agent_config(reg), patch)
         # Re-scrub after merge
         for section, key in _REDACT_PATHS:
             if section in merged and key in merged[section]:
                 merged[section][key] = ""
+        return merged
+
+    def write_config_document(self, reg: AgentRegistration, document: dict) -> None:
         config_path = Path(reg.data_dir) / "config.yaml"
         with open(config_path, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(merged, fh, default_flow_style=False, allow_unicode=True)
+            yaml.safe_dump(document, fh, default_flow_style=False, allow_unicode=True)
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

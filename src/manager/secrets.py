@@ -139,8 +139,8 @@ class ManagerSecretStore:
     def set_api_token(self, token: str) -> None:
         self.set_manager_secret("manager_api_token", token)
 
-    def get_channel_token(self) -> str | None:
-        return self.get_manager_secret("channel_token")
+    def get_ipc_token(self) -> str | None:
+        return self.get_manager_secret("ipc_token")
 
-    def set_channel_token(self, token: str) -> None:
-        self.set_manager_secret("channel_token", token)
+    def set_ipc_token(self, token: str) -> None:
+        self.set_manager_secret("ipc_token", token)

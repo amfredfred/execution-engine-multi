@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from src.manager.models import AgentStatus, OperationRecord
 
 if TYPE_CHECKING:
-    from src.manager.agent_channel import AgentChannel
+    from src.manager.event_hub import EngineEventHub
     from src.manager.desired_state import DesiredStateSupervisor
     from src.manager.process_supervisor import ProcessSupervisor
     from src.manager.provisioning import AgentProvisioner
@@ -34,14 +34,14 @@ class OperationRunner:
         supervisor: "ProcessSupervisor",
         desired: "DesiredStateSupervisor",
         provisioner: "AgentProvisioner",
-        channel: "AgentChannel",
+        event_hub: "EngineEventHub",
         on_agent_changed: "Callable[[str], None] | None" = None,
     ) -> None:
         self._registry    = registry
         self._supervisor  = supervisor
         self._desired     = desired
         self._provisioner = provisioner
-        self._channel     = channel
+        self._event_hub   = event_hub
         self._on_changed  = on_agent_changed or (lambda _: None)
         self._agent_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
         self._executor    = ThreadPoolExecutor(max_workers=4, thread_name_prefix="op")
@@ -114,6 +114,7 @@ class OperationRunner:
         elif op_type == "remove":
             self._registry.set_desired_status(agent_id, "stopped")
             self._supervisor.terminate(agent_id, force=True)
+            self._event_hub.forget_engine(agent_id)
             self._provisioner.deprovision(agent_id)
             self._on_changed(agent_id)
 

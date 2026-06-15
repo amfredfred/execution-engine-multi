@@ -14,9 +14,8 @@
 #   random %TEMP% path on every launch, causing DLL resolution to fail silently.
 #   --onedir keeps all binaries in a stable dist/ folder so MT5 always finds them.
 #
-# GUI mode:
-#   Default launch shows the CustomTkinter desktop app.
-#   Pass --headless for NSSM service mode (no window).
+# Default launch shows the control-plane GUI. The manager launches isolated
+# engine workers with --agent.
 
 import os
 import sys

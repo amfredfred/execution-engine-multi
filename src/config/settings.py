@@ -627,9 +627,12 @@ class ManagerConfig:
     storage_path: str
     agents_data_dir: str
     api_port: int = 8870
-    channel_port: int = 8871
-    legacy_config_path: str = ""
-    gateway_ws_url: str = ""
+    ipc_port: int = 8871
+    # Signal Manager's GatewayServer WebSocket URL — signals flow from here.
+    signal_ws_url: str = "ws://127.0.0.1:8765"
+    # Must match gateway_server.secret in signal-engine/manager/config.yaml (leave blank if unset).
+    signal_ws_token: str = ""
+    # Apex Quantel cloud HTTP base URL — used only for agent provisioning/license checks.
     gateway_http_url: str = ""
     engine_version: str = "0.1.0"
 
@@ -641,16 +644,14 @@ class ManagerConfig:
             / "Multi"
         )
         gw_ws = _INTERNAL_DEFAULTS["gateway"]["ws_url"]
-        # Derive HTTP base URL from the WS URL:
-        # wss://host/path → https://host
         from urllib.parse import urlparse
         parsed = urlparse(gw_ws)
         gw_http = f"https://{parsed.netloc}"
         return cls(
             storage_path=str(base / "manager"),
             agents_data_dir=str(base / "agents"),
-            legacy_config_path=str(base.parent / "config.yaml"),
-            gateway_ws_url=gw_ws,
+            signal_ws_url=os.environ.get("SIGNAL_MANAGER_WS_URL", "ws://127.0.0.1:8765"),
+            signal_ws_token=os.environ.get("SIGNAL_MANAGER_TOKEN", ""),
             gateway_http_url=gw_http,
             engine_version=_resolve_engine_version(),
         )

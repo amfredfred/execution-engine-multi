@@ -21,8 +21,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Task creation/removal requires an Administrator token. Inno Setup already
+# supplies one, but manual updates should elevate themselves instead of
+# partially succeeding.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
+if (-not $isAdmin) {
+    $scriptPath = $MyInvocation.MyCommand.Path
+    $args = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -Action $Action"
+    $process = Start-Process powershell.exe -Verb RunAs -ArgumentList $args -Wait -PassThru
+    exit $process.ExitCode
+}
+
 $TaskName       = "AQ Manager"
-$LegacyTaskName = "AQ Agent Manager"   # older installs used this name
 $TaskFolder  = "\Apex Quantel\"
 $Description = "Apex Quantel Manager - orchestrates multi-agent MT5 trade execution"
 $EngineDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -65,8 +77,6 @@ function Remove-ManagerTask {
         Write-Host "  Removing existing Manager task..."
         Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskFolder -Confirm:$false
     }
-    # Also remove legacy task name from older installs
-    Stop-NamedTask $LegacyTaskName
 }
 
 function Kill-ManagerOrphans {
@@ -158,8 +168,7 @@ function _install {
         -Argument         "--manager" `
         -WorkingDirectory $EngineDir
 
-    # Run at logon for this user, 20 s delay (shorter than agent delay of 30 s
-    # so the Manager is online before any legacy headless agent starts)
+    # Run at logon for this user. The Manager is the sole Gateway owner.
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
     $trigger.Delay = "PT20S"
 
@@ -213,8 +222,7 @@ function _update {
 
 switch ($Action) {
     "uninstall" {
-        Remove-ManagerTask         # also removes LegacyTaskName
-        Stop-NamedTask $LegacyTaskName  # redundant safety call
+        Remove-ManagerTask
         Kill-ManagerOrphans
         Write-Host "AQ Manager uninstalled."
     }

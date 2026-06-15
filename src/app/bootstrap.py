@@ -32,7 +32,12 @@ logger = logging.getLogger(__name__)
 # Public API
 # ---------------------------------------------------------------------------
 
-def bootstrap(container: AppContainer, config: AppConfig) -> None:
+def bootstrap(
+    container: AppContainer,
+    config: AppConfig,
+    *,
+    expose_local_ui: bool = True,
+) -> None:
     """
     Start the engine.  Returns as soon as UIBridge is listening.
     MT5 is connected asynchronously — the GUI will update automatically
@@ -50,7 +55,8 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
         container.ui_bridge.build_remote_snapshot
     )
     _wire_commands(container)
-    container.ui_bridge.start()
+    if expose_local_ui:
+        container.ui_bridge.start()
 
     # ── MT5 + trading services (background, retries forever) ──────────────────
     t = threading.Thread(
@@ -67,8 +73,8 @@ def bootstrap(container: AppContainer, config: AppConfig) -> None:
 def shutdown(container: AppContainer) -> None:
     logger.info("Shutting down Execution Engine")
     container.event_bus.emit(Events.SYSTEM_STOPPING)
-    if container.managed_client:
-        container.managed_client.stop()
+    if container.worker_events:
+        container.worker_events.stop()
     container.signal_consumer.stop()
     container.signal_queue.stop()
     container.position_manager.stop()
@@ -177,9 +183,9 @@ def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
     # Start trading services
     container.signal_queue.start()
     container.position_manager.start()
-    # In managed mode signals arrive via AgentChannel from the manager;
-    # the gateway WS is owned by the manager process, not this agent.
-    if not container.managed_client:
+    # Workers receive commands through manager-owned IPC. The manager owns the
+    # only Gateway connection.
+    if not container.worker_events:
         container.signal_consumer.start()
 
     container.event_bus.emit(Events.SYSTEM_STARTED)

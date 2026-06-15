@@ -1,7 +1,31 @@
-﻿# Execution Engine â€” configuration
+﻿# Execution Engine — configuration
 # Copy to config.yaml and fill in your values. config.yaml is git-ignored.
-# Secrets (MT5_PASSWORD, APEX_ACTIVATION_KEY) go in .env.
+# Secrets (MT5_PASSWORD) go in .env or directly in config.yaml.
 
+# ---------------------------------------------------------------------------
+# Signal source — where trade signals come from.
+#
+# In the full trade-relay stack the Signal Manager (signal-engine/manager/)
+# receives raw signals from multiple brokers, runs consensus, and publishes
+# via its internal GatewayServer.  The execution-engine manager connects here
+# instead of to the external gateway directly.
+#
+# ws_url  — WebSocket URL of the Signal Manager's GatewayServer.
+#            Default: ws://127.0.0.1:8765 (matches gateway_server.port in
+#            signal-engine/manager/config.yaml).
+# token   — Must match gateway_server.secret in signal-manager/config.yaml.
+#            Leave blank when gateway_server.secret is empty (development).
+# ---------------------------------------------------------------------------
+signal_manager:
+  ws_url: ws://127.0.0.1:8765
+  token: “”
+
+# ---------------------------------------------------------------------------
+# Gateway — used only by standalone single-agent mode (no --manager flag).
+# In managed mode the manager handles gateway connectivity; these values are
+# ignored for signal reception but still used by the agent's activation key
+# and lifecycle reporting back to the Apex Quantel cloud service.
+# ---------------------------------------------------------------------------
 gateway:
   ws_url: wss://apex-gateway.somicast.com/engine
   engine_id: execution-demo-001

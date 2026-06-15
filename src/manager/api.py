@@ -17,7 +17,8 @@ from typing import Callable, TYPE_CHECKING
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
-    from src.manager.agent_channel import AgentChannel
+    from src.manager.event_hub import EngineEventHub
+    from src.manager.config_revisions import ConfigRevisionService
     from src.manager.operations import OperationRunner
     from src.manager.provisioning import AgentProvisioner
     from src.manager.registry import AgentRegistry
@@ -35,7 +36,8 @@ class LocalManagerApi:
         ops: "OperationRunner",
         provisioner: "AgentProvisioner",
         discovery: "TerminalDiscovery",
-        channel: "AgentChannel",
+        event_hub: "EngineEventHub",
+        config_revisions: "ConfigRevisionService",
         token: str,
         port: int = 8870,
         storage_path: str = "",
@@ -45,7 +47,8 @@ class LocalManagerApi:
         self._ops         = ops
         self._provisioner = provisioner
         self._discovery   = discovery
-        self._channel     = channel
+        self._event_hub   = event_hub
+        self._config_revisions = config_revisions
         self._token       = token
         self._port        = port
         self._storage_path = storage_path
@@ -79,7 +82,8 @@ class LocalManagerApi:
         ops         = self._ops
         provisioner = self._provisioner
         discovery   = self._discovery
-        channel     = self._channel
+        event_hub   = self._event_hub
+        config_revisions = self._config_revisions
         token       = self._token
         on_activation_key_changed = self._on_activation_key_changed
 
@@ -121,7 +125,7 @@ class LocalManagerApi:
 
                 elif parts == ["agents"]:
                     agents = registry.list_agents()
-                    snapshots = channel.get_all_snapshots()
+                    snapshots = event_hub.get_all_snapshots()
                     result = []
                     for reg in agents:
                         snap = snapshots.get(reg.agent_id)
@@ -157,7 +161,7 @@ class LocalManagerApi:
                     if not reg:
                         self._send(404, {"error": "Agent not found"})
                         return
-                    snap = channel.get_snapshot(parts[1])
+                    snap = event_hub.get_snapshot(parts[1])
                     d = {"agent_id": reg.agent_id, "status": reg.status.value}
                     if snap:
                         d["snapshot"] = snap.__dict__
@@ -269,8 +273,11 @@ class LocalManagerApi:
                     if not reg:
                         self._send(404, {"error": "Agent not found"})
                         return
-                    # config update handled by config_store (not exposed here yet)
-                    self._send(200, {"ok": True})
+                    try:
+                        result = config_revisions.apply(agent_id, self._body())
+                        self._send(202, result)
+                    except Exception as exc:
+                        self._send(400, {"error": str(exc)})
                 else:
                     self._send(404, {"error": "Not found"})
 

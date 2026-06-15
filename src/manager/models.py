@@ -34,7 +34,7 @@ class AgentRegistration:
     symbols:         list[str]      # e.g. ["XAUUSD"] — used for signal routing
     created_at:      int            # epoch ms
     updated_at:      int
-    last_seen_at:    int | None     # last ManagedAgentClient heartbeat
+    last_seen_at:    int | None     # last worker event or snapshot
     pid:             int | None     # current OS pid if RUNNING/STARTING
     crash_count:     int = 0
     last_crash_at:   int | None = None
@@ -67,9 +67,10 @@ class AgentSnapshot:
     balance:           float | None
     equity:            float | None
     open_trades:       int
-    gateway_connected: bool   # True = AgentChannel WS to manager is alive
+    gateway_connected: bool   # True = worker IPC connection to manager is alive
     uptime_sec:        int
     observed_at:       int    # epoch ms when snapshot was built
+    telemetry:         dict
 
 
 @dataclass

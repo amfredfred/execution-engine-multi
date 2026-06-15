@@ -11,11 +11,11 @@ import logging
 import secrets as _secrets
 from pathlib import Path
 
-from src.manager.agent_channel import AgentChannel
 from src.manager.api import LocalManagerApi
 from src.manager.config_store import AgentConfigStore
+from src.manager.config_revisions import ConfigRevisionService
 from src.manager.desired_state import DesiredStateSupervisor
-from src.manager.migration import LegacySingleAgentMigration
+from src.manager.event_hub import EngineEventHub
 from src.manager.operations import OperationRunner
 from src.manager.process_supervisor import ProcessSupervisor
 from src.manager.provisioning import AgentProvisioner
@@ -34,9 +34,9 @@ class ManagerRuntime:
         storage_path: str,
         agents_data_dir: str,
         api_port: int = 8870,
-        channel_port: int = 8871,
-        legacy_config_path: str = "",
-        gateway_ws_url: str = "",
+        ipc_port: int = 8871,
+        signal_ws_url: str = "ws://127.0.0.1:8765",
+        signal_ws_token: str = "",
         gateway_http_url: str = "",
         engine_version: str = "0.1.0",
     ) -> None:
@@ -58,11 +58,11 @@ class ManagerRuntime:
         )
 
         # ── Agent Channel ─────────────────────────────────────────────────
-        channel_token = self._load_or_create_channel_token()
-        self.channel = AgentChannel(
+        ipc_token = self._load_or_create_ipc_token()
+        self.event_hub = EngineEventHub(
             registry=self.registry,
-            token=channel_token,
-            port=channel_port,
+            token=ipc_token,
+            port=ipc_port,
         )
 
         # ── Process Supervisor + Desired State ────────────────────────────
@@ -71,12 +71,15 @@ class ManagerRuntime:
             registry=self.registry,
             secrets=self.secrets,
             src_root=src_root,
+            ipc_port=ipc_port,
             on_agent_stopped=self._on_agent_stopped,
         )
         self.desired = DesiredStateSupervisor(
             registry=self.registry,
             supervisor=self.supervisor,
-            channel=self.channel,
+        )
+        self.config_revisions = ConfigRevisionService(
+            self.registry, self.config_store, self.supervisor,
         )
 
         # ── Operations ────────────────────────────────────────────────────
@@ -85,19 +88,24 @@ class ManagerRuntime:
             supervisor=self.supervisor,
             desired=self.desired,
             provisioner=self.provisioner,
-            channel=self.channel,
+            event_hub=self.event_hub,
             on_agent_changed=self._on_agent_changed,
         )
 
         # ── Signal Router ─────────────────────────────────────────────────
-        activation_key = self.secrets.get_activation_key() or ""
         self.signal_router = ManagerSignalRouter(
             registry=self.registry,
-            channel=self.channel,
-            activation_key=activation_key,
-            gateway_ws_url=gateway_ws_url,
-            engine_version=engine_version,
+            event_hub=self.event_hub,
+            signal_ws_url=signal_ws_url,
+            signal_ws_token=signal_ws_token,
         )
+        # Agent snapshots and execution events are forwarded via UIBridge on each
+        # worker; no additional callback is needed at the manager level.
+        self.event_hub.set_event_callbacks(
+            on_snapshot=lambda agent_id, snap: None,
+            on_execution_event=lambda agent_id, ev, data: None,
+        )
+        self.event_hub.set_worker_ready_callback(self.config_revisions.worker_ready)
 
         # ── REST API ──────────────────────────────────────────────────────
         api_token = self._load_or_create_api_token(storage_path)
@@ -106,7 +114,8 @@ class ManagerRuntime:
             ops=self.ops,
             provisioner=self.provisioner,
             discovery=self.discovery,
-            channel=self.channel,
+            event_hub=self.event_hub,
+            config_revisions=self.config_revisions,
             token=api_token,
             port=api_port,
             storage_path=storage_path,
@@ -115,11 +124,6 @@ class ManagerRuntime:
 
         # ── Reconciliation + Migration ────────────────────────────────────
         self.reconciler = RestartReconciler(self.registry, self.supervisor)
-        self.migrator   = LegacySingleAgentMigration(
-            registry=self.registry,
-            provisioner=self.provisioner,
-            legacy_config_path=legacy_config_path,
-        )
 
     def start(self) -> None:
         logger.info("ManagerRuntime starting")
@@ -127,20 +131,17 @@ class ManagerRuntime:
         # 1. Clean up stale state from previous run
         self.reconciler.run()
 
-        # 2. Import legacy single-agent config if this is a fresh install
-        self.migrator.run_if_needed()
+        # 2. Start manager-owned worker command/event IPC
+        self.event_hub.start()
 
-        # 3. Start AgentChannel WS server
-        self.channel.start()
-
-        # 4. Start gateway signal router
+        # 3. Start gateway signal router
         active_agents = self.registry.list_agents()
         self.signal_router.start(active_agents)
 
-        # 5. Start REST API
+        # 4. Start REST API
         self.api.start()
 
-        # 6. Start desired-state reconciliation loop
+        # 5. Start desired-state reconciliation loop
         self.desired.start()
 
         logger.info("ManagerRuntime online")
@@ -150,7 +151,7 @@ class ManagerRuntime:
         self.desired.stop()
         self.signal_router.stop()
         self.api.stop()
-        self.channel.stop()
+        self.event_hub.stop()
         logger.info("ManagerRuntime stopped")
 
     # ── Event callbacks ───────────────────────────────────────────────────
@@ -165,16 +166,16 @@ class ManagerRuntime:
         self.signal_router.refresh_rooms(active_agents)
 
     def _on_activation_key_changed(self, activation_key: str) -> None:
-        """Reconnect shared gateway signaling after the manager key changes."""
-        self.signal_router.set_activation_key(activation_key, self.registry.list_agents())
+        """Called when the manager license key changes (used for provisioning only)."""
+        logger.info("Manager activation key updated")
 
     # ── Token bootstrap ───────────────────────────────────────────────────
 
-    def _load_or_create_channel_token(self) -> str:
-        token = self.secrets.get_channel_token()
+    def _load_or_create_ipc_token(self) -> str:
+        token = self.secrets.get_ipc_token()
         if not token:
             token = _secrets.token_hex(32)
-            self.secrets.set_channel_token(token)
+            self.secrets.set_ipc_token(token)
         return token
 
     def _load_or_create_api_token(self, storage_path: str) -> str:

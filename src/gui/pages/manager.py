@@ -31,7 +31,7 @@ class ManagerPage(ctk.CTkFrame):
     def __init__(self, parent: tk.Widget, app: "ApexTraderGUI") -> None:
         super().__init__(parent, fg_color="transparent", corner_radius=0)
         self.app = app
-        self._online = False
+        self._online: bool | None = None
         self._build()
         self._tick()
 
@@ -87,7 +87,7 @@ class ManagerPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=SUCCESS_BG, hover_color=SUCCESS_BORDER,
             border_width=1, border_color=SUCCESS_BORDER, text_color=GREEN,
-            command=self._start,
+            command=self.app.restart_manager,
         )
         self._btn_start.grid(row=0, column=0, padx=8, pady=4)
 
@@ -223,7 +223,7 @@ class ManagerPage(ctk.CTkFrame):
         info_row(tech_inner, "Task name",      "AQ Manager")
         info_row(tech_inner, "Task folder",    "\\Apex Quantel\\")
         info_row(tech_inner, "REST API",       "http://localhost:8870")
-        info_row(tech_inner, "Agent channel",  "ws://localhost:8871")
+        info_row(tech_inner, "Worker event IPC", "tcp://127.0.0.1:8871")
         info_row(tech_inner, "Data directory", "C:\\ProgramData\\Apex Quantel\\Multi\\")
         info_row(tech_inner, "Log file",       "C:\\ProgramData\\Apex Quantel\\Multi\\manager\\logs\\manager.log")
 

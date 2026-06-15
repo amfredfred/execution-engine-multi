@@ -19,7 +19,7 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 3.0          # seconds
-_MANAGER_BASE  = "http://localhost:8870"
+_MANAGER_BASE  = "http://127.0.0.1:8870"
 _TOKEN_PATH    = (
     Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
     / "Apex Quantel" / "Multi" / "manager" / "api_token.txt"

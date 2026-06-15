@@ -48,11 +48,10 @@ def _make_reg(
     )
 
 
-def _make_svc(registry=None, supervisor=None, channel=None):
+def _make_svc(registry=None, supervisor=None):
     return DesiredStateSupervisor(
         registry=registry  or MagicMock(),
         supervisor=supervisor or MagicMock(),
-        channel=channel   or MagicMock(),
     )
 
 

@@ -9,7 +9,6 @@ import logging
 import threading
 import time
 
-from src.manager.agent_channel import AgentChannel
 from src.manager.models import AgentStatus
 from src.manager.process_supervisor import ProcessSupervisor
 from src.manager.registry import AgentRegistry
@@ -26,11 +25,9 @@ class DesiredStateSupervisor:
         self,
         registry: AgentRegistry,
         supervisor: ProcessSupervisor,
-        channel: AgentChannel,
     ) -> None:
         self._registry   = registry
         self._supervisor = supervisor
-        self._channel    = channel
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         # agent_id → earliest epoch (seconds) at which restart is allowed
