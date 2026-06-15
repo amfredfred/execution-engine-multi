@@ -196,6 +196,25 @@ class ManagerClient:
                     on_done([])
         threading.Thread(target=_run, daemon=True).start()
 
+    def get_operation(self, op_id: str, on_done: Callable[[dict], None]) -> None:
+        """GET /operations/{op_id} — poll async operation status."""
+        def _run():
+            try:
+                on_done(self._get(f"/operations/{op_id}"))
+            except Exception as exc:
+                on_done({"status": "failed", "error": str(exc)})
+        threading.Thread(target=_run, daemon=True).start()
+
+    def get_health(self, on_done: Callable[[dict], None]) -> None:
+        """GET /health — manager health including signal manager status."""
+        def _run():
+            try:
+                result = self._get("/health")
+                on_done(result)
+            except Exception as exc:
+                on_done({"ok": False, "error": str(exc)})
+        threading.Thread(target=_run, daemon=True).start()
+
     def get_license_info(self, on_done: Callable[[dict], None]) -> None:
         """GET cached manager license details in a background thread."""
         self._get_license_request("GET", "/license", {}, on_done)

@@ -153,6 +153,8 @@ def test_manager_start_rolls_back_started_components() -> None:
     runtime = ManagerRuntime.__new__(ManagerRuntime)
     runtime.reconciler = MagicMock()
     runtime.registry = MagicMock()
+    runtime.secrets = MagicMock()
+    runtime.secrets.get_activation_key.return_value = "already-set"
     runtime.event_hub = MagicMock()
     runtime.event_hub.get_all_snapshots.return_value = {}
     runtime.signal_router = MagicMock()
@@ -196,6 +198,7 @@ def test_manager_refuses_shutdown_with_open_positions_unless_forced() -> None:
 
 
 def test_manager_health_includes_registry_ipc_signal_manager_and_workers() -> None:
+    import threading
     runtime = ManagerRuntime.__new__(ManagerRuntime)
     runtime.registry = MagicMock()
     runtime.registry.health_check.return_value = True
@@ -208,6 +211,9 @@ def test_manager_health_includes_registry_ipc_signal_manager_and_workers() -> No
     runtime.signal_router.health_report.return_value = {
         "ok": True, "configured": True, "connected": True
     }
+    runtime._gateway_http_url = "https://apex-gateway.example"
+    runtime._gateway_reachable = True
+    runtime._gateway_check_lock = threading.Lock()
 
     report = runtime.health_report()
 
@@ -215,3 +221,4 @@ def test_manager_health_includes_registry_ipc_signal_manager_and_workers() -> No
     assert report["registry"]["ok"] is True
     assert report["ipc"]["ok"] is True
     assert report["signal_manager"]["connected"] is True
+    assert report["gateway"]["reachable"] is True

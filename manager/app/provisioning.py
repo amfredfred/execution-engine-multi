@@ -277,30 +277,37 @@ class AgentProvisioner:
         if not activation_key:
             raise SlotLimitError("No activation key configured at manager level")
 
-        current_count = len(self._registry.list_agents())
-
         try:
-            body = json.dumps({
-                "activation_key": activation_key,
-                "device_count":   current_count,
-            }).encode()
+            body = json.dumps({"activation_key": activation_key}).encode()
             req = urllib.request.Request(
-                f"{self._gateway_http_url}/licenses/slots/check",
+                f"{self._gateway_http_url}/activation/preflight",
                 data=body,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "User-Agent": "AQAgent/1.0"},
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read())
-            if not data.get("allowed", False):
-                max_slots  = data.get("max_slots", "?")
-                used_slots = data.get("used_slots", current_count)
+            if not data.get("valid", False):
+                raise SlotLimitError("License key is not valid or has expired")
+            available = data.get("available_devices", 1)
+            if available <= 0:
+                max_dev  = data.get("max_devices", "?")
+                used_dev = data.get("used_devices", "?")
                 raise SlotLimitError(
-                    f"License allows {max_slots} agent(s); {used_slots} already in use"
+                    f"License allows {max_dev} agent(s); {used_dev} already in use"
                 )
         except SlotLimitError:
             raise
+        except urllib.error.HTTPError as exc:
+            # 429 = rate limited — surface it clearly; other HTTP errors fail open.
+            if exc.code == 429:
+                raise SlotLimitError(
+                    "Rate limit exceeded on slot check — wait a few minutes and try again"
+                ) from exc
+            logger.warning(
+                "Slot check returned HTTP %s — proceeding with provisioning", exc.code
+            )
         except urllib.error.URLError as exc:
-            raise SlotLimitError(f"Slot verification unavailable: {exc.reason}") from exc
+            logger.warning("Slot check unreachable (%s) — proceeding with provisioning", exc.reason)
         except Exception as exc:
-            raise SlotLimitError(f"Slot verification failed: {exc}") from exc
+            logger.warning("Slot check failed (%s) — proceeding with provisioning", exc)

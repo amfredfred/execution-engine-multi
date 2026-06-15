@@ -349,6 +349,8 @@ class AddAgentPage(ctk.CTkFrame):
         self.app = app
         self._terminals: list[dict] = []
         self._sym_vars:  dict[str, tk.BooleanVar] = {}
+        self._terminal_card_frames: list[ctk.CTkFrame] = []
+        self._selected_terminal_idx: int = -1
         self._build()
 
     def _build(self) -> None:
@@ -392,24 +394,11 @@ class AddAgentPage(ctk.CTkFrame):
 
         card2 = self._card(inner)
 
-        self._terminal_var = tk.StringVar(value="Scanning…")
-        self._terminal_menu = ctk.CTkOptionMenu(
-            card2,
-            variable=self._terminal_var,
-            values=["Scanning…"],
-            fg_color=BASE,
-            button_color=LINE_STRONG,
-            button_hover_color=LINE_STRONG,
-            text_color=TEXT,
-            height=36,
-            corner_radius=6,
-        )
-        self._terminal_menu.pack(fill="x", padx=14, pady=(10, 4))
-
         scan_row = ctk.CTkFrame(card2, fg_color="transparent")
-        scan_row.pack(fill="x", padx=14, pady=(0, 10))
+        scan_row.pack(fill="x", padx=14, pady=(10, 8))
         self._terminal_status = ctk.CTkLabel(
-            scan_row, text="", font=ctk.CTkFont(size=11), text_color=MUTED, anchor="w",
+            scan_row, text="Scanning for MT5 terminals…",
+            font=ctk.CTkFont(size=11), text_color=MUTED, anchor="w",
         )
         self._terminal_status.pack(side="left")
         ctk.CTkButton(
@@ -419,6 +408,10 @@ class AddAgentPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=11),
             command=self._load_terminals,
         ).pack(side="right")
+
+        # Terminal cards are injected here by _on_terminals_loaded
+        self._terminal_list = ctk.CTkFrame(card2, fg_color="transparent")
+        self._terminal_list.pack(fill="x", padx=14, pady=(0, 10))
 
         # ── MT5 Credentials ───────────────────────────────────────────────────
         self._section_label(inner, "MT5 CREDENTIALS")
@@ -511,14 +504,18 @@ class AddAgentPage(ctk.CTkFrame):
     def on_navigate_to(self) -> None:
         """Called by app._show_page() each time this page becomes visible."""
         self._banner.hide()
+        self._selected_terminal_idx = -1
+        self._terminal_card_frames = []
         self._load_terminals()
         self._load_symbols()
 
     # ── Terminal loading ──────────────────────────────────────────────────────
 
     def _load_terminals(self) -> None:
-        self._terminal_var.set("Scanning…")
-        self._terminal_menu.configure(values=["Scanning…"])
+        self._selected_terminal_idx = -1
+        for w in self._terminal_list.winfo_children():
+            w.destroy()
+        self._terminal_card_frames = []
         self._terminal_status.configure(text="Scanning for MT5 terminals…", text_color=MUTED)
 
         if not hasattr(self.app, "manager_client"):
@@ -530,52 +527,121 @@ class AddAgentPage(ctk.CTkFrame):
 
     def _on_terminals_loaded(self, terminals: list[dict]) -> None:
         self._terminals = terminals
+        for w in self._terminal_list.winfo_children():
+            w.destroy()
+        self._terminal_card_frames = []
+        self._selected_terminal_idx = -1
 
         if not terminals:
-            values = ["No terminals found — is the Manager running?"]
-            self._terminal_menu.configure(values=values)
-            self._terminal_var.set(values[0])
             self._terminal_status.configure(
                 text="No MT5 terminals found. Start the Manager and click Scan again.",
                 text_color=YELLOW,
             )
+            ctk.CTkLabel(
+                self._terminal_list,
+                text="No MT5 terminals detected.",
+                font=ctk.CTkFont(size=12), text_color=MUTED,
+            ).pack(anchor="w", pady=6)
             return
-
-        labels = []
-        for t in terminals:
-            state = t.get("state", "unknown")
-            name  = t.get("name") or t.get("path", "")[:40]
-            if state == "available":
-                label = f"{name}"
-            elif state in ("managed_running", "managed_stopped"):
-                label = f"{name}  [in use]"
-            else:
-                label = f"{name}  [{state}]"
-            labels.append(label)
-
-        self._terminal_menu.configure(values=labels)
-        self._terminal_var.set(labels[0])
 
         avail = sum(1 for t in terminals if t.get("state") == "available")
         self._terminal_status.configure(
             text=f"{len(terminals)} terminal(s) found, {avail} available",
-            text_color=GREEN,
+            text_color=GREEN if avail else YELLOW,
         )
 
-    def _get_selected_terminal_path(self) -> str:
-        selected = self._terminal_var.get()
-        for t in self._terminals:
-            name  = t.get("name") or t.get("path", "")[:40]
-            state = t.get("state", "unknown")
-            if state == "available":
-                label = f"{name}"
-            elif state in ("managed_running", "managed_stopped"):
-                label = f"{name}  [in use]"
+        for idx, t in enumerate(terminals):
+            state     = t.get("state", "unknown")
+            name      = t.get("name") or "MetaTrader 5"
+            path      = t.get("path", "")
+            is_used   = state in ("managed_running", "managed_stopped")
+            is_avail  = state == "available"
+
+            card_fg = BASE if is_avail else SURFACE
+            card_bd = LINE_STRONG if is_avail else LINE
+            fg_name = TEXT if is_avail else MUTED
+            fg_path = MUTED if is_avail else LINE_STRONG
+
+            frame = ctk.CTkFrame(
+                self._terminal_list,
+                fg_color=card_fg, corner_radius=6,
+                border_width=1, border_color=card_bd,
+            )
+            frame.pack(fill="x", pady=3)
+
+            inner = ctk.CTkFrame(frame, fg_color="transparent")
+            inner.pack(fill="x", padx=12, pady=8)
+
+            # Left: radio dot + name/path column
+            dot = ctk.CTkLabel(
+                inner,
+                text="○",
+                font=ctk.CTkFont(size=15), text_color=MUTED,
+                width=22,
+            )
+            dot.pack(side="left", padx=(0, 8))
+
+            col = ctk.CTkFrame(inner, fg_color="transparent")
+            col.pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(
+                col, text=name,
+                font=ctk.CTkFont(size=13, weight="bold"), text_color=fg_name, anchor="w",
+            ).pack(anchor="w")
+            if path:
+                ctk.CTkLabel(
+                    col, text=path[:60],
+                    font=ctk.CTkFont(size=10), text_color=fg_path, anchor="w",
+                ).pack(anchor="w", pady=(1, 0))
+
+            # Right: "In Use" badge for taken terminals
+            if is_used:
+                badge = ctk.CTkFrame(
+                    inner, fg_color=WARNING_BG,
+                    border_width=1, border_color=WARNING_BORDER, corner_radius=4,
+                )
+                badge.pack(side="right")
+                ctk.CTkLabel(
+                    badge, text="In Use",
+                    font=ctk.CTkFont(size=10, weight="bold"), text_color=YELLOW,
+                ).pack(padx=8, pady=2)
+
+            self._terminal_card_frames.append((frame, dot, is_avail))
+
+            if is_avail:
+                _idx = idx
+                _dot = dot
+                frame.bind("<Button-1>", lambda e, i=_idx: self._select_terminal(i))
+                inner.bind("<Button-1>", lambda e, i=_idx: self._select_terminal(i))
+                col.bind("<Button-1>", lambda e, i=_idx: self._select_terminal(i))
+                _dot.bind("<Button-1>", lambda e, i=_idx: self._select_terminal(i))
+                for child in col.winfo_children():
+                    child.bind("<Button-1>", lambda e, i=_idx: self._select_terminal(i))
+                frame.configure(cursor="hand2")
+                inner.configure(cursor="hand2")
+
+        # Auto-select first available
+        for idx, t in enumerate(terminals):
+            if t.get("state") == "available":
+                self._select_terminal(idx)
+                break
+
+    def _select_terminal(self, idx: int) -> None:
+        self._selected_terminal_idx = idx
+        for i, (frame, dot, is_avail) in enumerate(self._terminal_card_frames):
+            if not is_avail:
+                continue
+            if i == idx:
+                frame.configure(border_color=SUCCESS_BORDER, fg_color=SUCCESS_BG)
+                dot.configure(text="●", text_color=GREEN)
             else:
-                label = f"{name}  [{state}]"
-            if label == selected:
-                return t.get("path", "")
-        return ""
+                frame.configure(border_color=LINE_STRONG, fg_color=BASE)
+                dot.configure(text="○", text_color=MUTED)
+
+    def _get_selected_terminal_path(self) -> str:
+        idx = self._selected_terminal_idx
+        if idx < 0 or idx >= len(self._terminals):
+            return ""
+        return self._terminals[idx].get("path", "")
 
     # ── Symbol loading ────────────────────────────────────────────────────────
 
@@ -734,19 +800,37 @@ class AddAgentPage(ctk.CTkFrame):
         )
 
     def _on_done(self, op_id: str | None) -> None:
-        if op_id:
-            self._banner.show("Agent provisioned. Returning to fleet…", "good")
-            # Force an immediate re-poll so the new agent is visible on arrival
-            self.app.manager_client.get_agents(
-                lambda data: self.app._queue.put({"type": "agents", "payload": data})
-            )
-            self.after(1200, lambda: self.app.navigate("Agents"))
-        else:
+        if not op_id:
             self._banner.show(
-                "Failed to provision agent — is the Manager running?\n"
-                "Check that the AQ Manager scheduled task is active.",
+                "Could not reach the Manager — is the AQ Manager task running?",
                 "danger",
             )
+            return
+        self._banner.show("Provisioning agent…", "info")
+        self._poll_provision_op(op_id, attempts=10)
+
+    def _poll_provision_op(self, op_id: str, attempts: int) -> None:
+        def _check(op: dict) -> None:
+            status = op.get("status")
+            if status == "completed":
+                self._banner.show("Agent provisioned. Returning to fleet…", "good")
+                self.app.manager_client.get_agents(
+                    lambda data: self.app._queue.put({"type": "agents", "payload": data})
+                )
+                self.after(1200, lambda: self.app.navigate("Agents"))
+            elif status == "failed":
+                error = op.get("error") or "Unknown error"
+                self._banner.show(f"Provisioning failed: {error}", "danger")
+            elif attempts > 0:
+                self.after(500, lambda: self._poll_provision_op(op_id, attempts - 1))
+            else:
+                self._banner.show(
+                    "Provisioning is taking longer than expected — check the Agents page.",
+                    "warn",
+                )
+        self.app.manager_client.get_operation(
+            op_id, lambda o: self.after(0, lambda: _check(o))
+        )
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

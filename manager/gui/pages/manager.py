@@ -32,6 +32,7 @@ class ManagerPage(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent", corner_radius=0)
         self.app = app
         self._online: bool | None = None
+        self._health_last_fetch = 0.0
         self._build()
         self._tick()
 
@@ -69,6 +70,18 @@ class ManagerPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=12), text_color=MUTED,
         )
         self._lbl_heartbeat.pack(anchor="w", pady=(10, 0))
+
+        self._lbl_signal = ctk.CTkLabel(
+            inner, text="○  Signal Manager: checking…",
+            font=ctk.CTkFont(size=12), text_color=MUTED,
+        )
+        self._lbl_signal.pack(anchor="w", pady=(4, 0))
+
+        self._lbl_gateway = ctk.CTkLabel(
+            inner, text="○  Cloud Gateway: checking…",
+            font=ctk.CTkFont(size=12), text_color=MUTED,
+        )
+        self._lbl_gateway.pack(anchor="w", pady=(4, 0))
 
         # ── Controls ───────────────────────────────────────────────────────────
         section_rule(content, "CONTROLS").pack(fill="x", pady=(8, 8))
@@ -310,7 +323,54 @@ class ManagerPage(ctk.CTkFrame):
         else:
             self._lbl_heartbeat.configure(text="Last contact: --", text_color=MUTED)
 
+        now = time.time()
+        if online and now - self._health_last_fetch >= 5.0:
+            self._health_last_fetch = now
+            self.app.manager_client.get_health(
+                lambda h: self.after(0, lambda health=h: self._apply_health(health))
+            )
+        elif not online:
+            self._lbl_signal.configure(
+                text="○  Signal Manager: manager offline", text_color=MUTED,
+            )
+            self._lbl_gateway.configure(
+                text="○  Cloud Gateway: manager offline", text_color=MUTED,
+            )
+
         self.after(1000, self._tick)
+
+    def _apply_health(self, health: dict) -> None:
+        sm = health.get("signal_manager", {})
+        connected  = bool(sm.get("connected"))
+        configured = bool(sm.get("configured"))
+        if connected:
+            self._lbl_signal.configure(
+                text="●  Signal Manager: connected", text_color=GREEN,
+            )
+        elif configured:
+            self._lbl_signal.configure(
+                text="○  Signal Manager: configured but not connected", text_color=YELLOW,
+            )
+        else:
+            self._lbl_signal.configure(
+                text="○  Signal Manager: not configured", text_color=MUTED,
+            )
+
+        gw = health.get("gateway", {})
+        gw_reachable = gw.get("reachable")
+        gw_url = gw.get("url") or "apex-gateway.somicast.com"
+        if gw_reachable is None:
+            self._lbl_gateway.configure(
+                text="○  Cloud Gateway: checking…", text_color=MUTED,
+            )
+        elif gw_reachable:
+            self._lbl_gateway.configure(
+                text=f"●  Cloud Gateway: reachable ({gw_url})", text_color=GREEN,
+            )
+        else:
+            self._lbl_gateway.configure(
+                text=f"✕  Cloud Gateway: unreachable ({gw_url})", text_color=RED,
+            )
 
     # ── Controls ─────────────────────────────────────────────────────────────
 

@@ -263,7 +263,7 @@ class ProcessSupervisor:
             self._procs.pop(agent_id, None)
 
         current = self._registry.get_agent(agent_id)
-        if current and current.status not in (AgentStatus.STOPPING, AgentStatus.STOPPED):
+        if current and current.status != AgentStatus.STOPPED:
             self._registry.set_agent_status(agent_id, AgentStatus.STOPPED, pid=None)
 
         self._registry.emit_event(

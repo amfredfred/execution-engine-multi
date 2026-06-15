@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import secrets as _secrets
 import threading
+import time
+import urllib.request
 from pathlib import Path
 
 from manager.app.api import LocalManagerApi
@@ -133,8 +135,14 @@ class ManagerRuntime:
         self._license_stop = threading.Event()
         self._license_thread: threading.Thread | None = None
 
+        # ── Gateway reachability (cached, checked in background) ──────────
+        self._gateway_http_url: str = gateway_http_url.rstrip("/")
+        self._gateway_reachable: bool | None = None   # None = not yet checked
+        self._gateway_check_lock = threading.Lock()
+
     def start(self) -> None:
         logger.info("ManagerRuntime starting")
+        self._migrate_activation_key()
         started = []
         try:
             self.reconciler.run()
@@ -154,6 +162,11 @@ class ManagerRuntime:
                 daemon=True,
             )
             self._license_thread.start()
+            threading.Thread(
+                target=self._gateway_check_loop,
+                name="gateway-check",
+                daemon=True,
+            ).start()
         except Exception:
             logger.exception("ManagerRuntime startup failed; rolling back")
             for component in reversed(started):
@@ -248,13 +261,69 @@ class ManagerRuntime:
         signal_manager = self.signal_router.health_report()
         ipc_ok = self.event_hub._server is not None
         ok = registry_ok and ipc_ok and workers["ok"] and signal_manager["ok"]
+        with self._gateway_check_lock:
+            gw_reachable = self._gateway_reachable
         return {
             "ok": ok,
             "registry": {"ok": registry_ok},
             "ipc": {"ok": ipc_ok},
             "signal_manager": signal_manager,
+            "gateway": {
+                "url": self._gateway_http_url,
+                "reachable": gw_reachable,
+            },
             **workers,
         }
+
+    def _gateway_check_loop(self) -> None:
+        """Background thread: probe gateway HTTP reachability every 30 s."""
+        while not self._license_stop.wait(0):
+            reachable = self._probe_gateway()
+            with self._gateway_check_lock:
+                self._gateway_reachable = reachable
+            if self._license_stop.wait(30):
+                break
+
+    def _probe_gateway(self) -> bool:
+        if not self._gateway_http_url:
+            return False
+        try:
+            req = urllib.request.Request(
+                self._gateway_http_url,
+                method="HEAD",
+                headers={"User-Agent": "AQAgent/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+            return True
+        except urllib.error.HTTPError:
+            return True   # Got an HTTP response — server is up
+        except Exception:
+            return False
+
+    def _migrate_activation_key(self) -> None:
+        """One-time migration: read activation_key from config.yaml into DPAPI secret store."""
+        if self.secrets.get_activation_key():
+            return
+        config_path = Path(self.registry.storage_path).parent / "config.yaml"
+        if not config_path.exists():
+            return
+        try:
+            import yaml
+            with open(config_path, "r", encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+            key = str(cfg.get("gateway", {}).get("activation_key") or "").strip()
+            if len(key) < 16:
+                return
+            self.secrets.set_activation_key(key)
+            cfg.setdefault("gateway", {})["activation_key"] = ""
+            tmp = config_path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(cfg, fh, default_flow_style=False, allow_unicode=True)
+            tmp.replace(config_path)
+            logger.info("Migrated activation key from config.yaml to secret store")
+        except Exception:
+            logger.exception("Failed to migrate activation key from config.yaml")
 
     # ── Token bootstrap ───────────────────────────────────────────────────
 

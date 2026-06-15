@@ -91,12 +91,62 @@ def test_slot_verification_fails_closed_without_gateway() -> None:
 
 
 @patch("manager.app.provisioning.urllib.request.urlopen")
-def test_slot_verification_fails_closed_when_gateway_is_unreachable(mock_urlopen) -> None:
+def test_slot_verification_passes_when_slots_available(mock_urlopen) -> None:
+    provisioner, _, _ = _provisioner()
+    mock_urlopen.return_value = _response({
+        "valid": True, "max_devices": 3, "used_devices": 1, "available_devices": 2,
+    })
+
+    provisioner._check_slot_available()  # must not raise
+
+
+@patch("manager.app.provisioning.urllib.request.urlopen")
+def test_slot_verification_blocks_when_no_slots_available(mock_urlopen) -> None:
+    provisioner, _, _ = _provisioner()
+    mock_urlopen.return_value = _response({
+        "valid": True, "max_devices": 1, "used_devices": 1, "available_devices": 0,
+    })
+
+    with pytest.raises(SlotLimitError, match="1 agent"):
+        provisioner._check_slot_available()
+
+
+@patch("manager.app.provisioning.urllib.request.urlopen")
+def test_slot_verification_blocks_when_key_invalid(mock_urlopen) -> None:
+    provisioner, _, _ = _provisioner()
+    mock_urlopen.return_value = _response({"valid": False})
+
+    with pytest.raises(SlotLimitError, match="not valid"):
+        provisioner._check_slot_available()
+
+
+@patch("manager.app.provisioning.urllib.request.urlopen")
+def test_slot_verification_blocks_on_429(mock_urlopen) -> None:
+    provisioner, _, _ = _provisioner()
+    mock_urlopen.side_effect = __import__("urllib.error").error.HTTPError(
+        url="", code=429, msg="Too Many Requests", hdrs={}, fp=None,
+    )
+
+    with pytest.raises(SlotLimitError, match="Rate limit"):
+        provisioner._check_slot_available()
+
+
+@patch("manager.app.provisioning.urllib.request.urlopen")
+def test_slot_verification_fails_open_when_gateway_is_unreachable(mock_urlopen) -> None:
     provisioner, _, _ = _provisioner()
     mock_urlopen.side_effect = __import__("urllib.error").error.URLError("offline")
 
-    with pytest.raises(SlotLimitError, match="unavailable"):
-        provisioner._check_slot_available()
+    provisioner._check_slot_available()  # must not raise
+
+
+@patch("manager.app.provisioning.urllib.request.urlopen")
+def test_slot_verification_fails_open_on_http_5xx(mock_urlopen) -> None:
+    provisioner, _, _ = _provisioner()
+    mock_urlopen.side_effect = __import__("urllib.error").error.HTTPError(
+        url="", code=503, msg="Service Unavailable", hdrs={}, fp=None,
+    )
+
+    provisioner._check_slot_available()  # must not raise
 
 
 def test_provision_rolls_back_directory_secret_and_lease_on_failure(tmp_path) -> None:

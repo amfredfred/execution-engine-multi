@@ -35,6 +35,10 @@ class AgentRegistry:
         self._db_path = str(self._path / "registry.db")
         self._lock = threading.Lock()
 
+    @property
+    def storage_path(self) -> Path:
+        return self._path
+
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def init(self) -> None:

@@ -550,6 +550,11 @@ class _StepActivation(_WizardStep):
             )
         elif "timed out" in err_lower or "timeout" in err_lower:
             msg = "Connection timed out — check your internet connection and try again."
+        elif "rate limit" in err_lower or "429" in error:
+            msg = (
+                "Rate limit exceeded — too many verification attempts. "
+                "Wait a few minutes then try again."
+            )
         else:
             msg = (
                 f"Could not reach the gateway: {error}\n"
@@ -661,9 +666,8 @@ class _StepActivation(_WizardStep):
         # Save activation key to config.yaml so the Manager migration can read it
         # on first start and store it in DPAPI. Also persist available symbols
         # as a fallback for AddAgentPage when the Manager isn't running yet.
-        updates: dict = {"activation_key": key}
-        if url_override:
-            updates["ws_url"] = url_override
+        effective_ws_url = url_override if url_override else self._gateway_ws_url
+        updates: dict = {"activation_key": key, "ws_url": effective_ws_url}
         if self._preflight:
             updates["symbols"] = self._preflight.get("symbols") or ["XAUUSD"]
 

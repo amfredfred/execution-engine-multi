@@ -39,7 +39,7 @@ _STATUS_COLOUR = {
     "PROVISIONED": (INFO,   SURFACE_RAISED, LINE),
 }
 
-_TAB_NAMES = ("Overview", "Risk", "Settings")
+_TAB_NAMES = ("Overview", "Risk", "Settings", "Logs")
 
 
 class AgentDashboardPage(ctk.CTkFrame):
@@ -50,6 +50,11 @@ class AgentDashboardPage(ctk.CTkFrame):
         self._agent_id: str | None = None
         self._tab_frames: dict[str, tk.Widget] = {}
         self._tab_btns: dict[str, ctk.CTkButton] = {}
+        self._live_log_job: str | None = None
+        self._live_log_offset: int = 0
+        self._live_log_fresh: bool = True
+        self._locally_paused: bool = False
+        self._open_trades: int = 0
         self._build()
         self.app.manager_state.subscribe("agents", self._on_agents_updated)
 
@@ -108,6 +113,7 @@ class AgentDashboardPage(ctk.CTkFrame):
         self._tab_frames["Overview"] = self._build_overview(content)
         self._tab_frames["Risk"]     = self._build_risk(content)
         self._tab_frames["Settings"] = self._build_settings_tab(content)
+        self._tab_frames["Logs"]     = self._build_logs_tab(content)
 
         self._show_tab("Overview")
 
@@ -119,6 +125,9 @@ class AgentDashboardPage(ctk.CTkFrame):
                 if cb:
                     cb()
             else:
+                cb = getattr(frame, "on_tab_leave", None)
+                if cb:
+                    cb()
                 frame.pack_forget()
         for n, btn in self._tab_btns.items():
             if n == name:
@@ -184,13 +193,15 @@ class AgentDashboardPage(ctk.CTkFrame):
         )
         self._btn_resume.pack(side="left", padx=(0, 8))
 
-        ctk.CTkButton(
+        self._btn_emergency = ctk.CTkButton(
             ctrl_row, text="⛔  Emergency Stop", width=160, height=38,
             fg_color=DANGER_BG, hover_color=DANGER_BORDER,
             border_width=1, border_color=DANGER_BORDER, text_color=RED,
             font=ctk.CTkFont(size=12),
             command=self._emergency_stop,
-        ).pack(side="left")
+            state="disabled",
+        )
+        self._btn_emergency.pack(side="left")
 
         self._ctrl_banner = ActionBanner(ctrl_card.body)
         self._ctrl_banner.pack(fill="x", pady=(8, 0))
@@ -338,12 +349,134 @@ class AgentDashboardPage(ctk.CTkFrame):
         frame.on_tab_enter = self._load_settings_tab  # type: ignore[attr-defined]
         return frame
 
+    # ── Logs tab ───────────────────────────────────────────────────────────────
+
+    def _build_logs_tab(self, parent: tk.Widget) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+
+        toolbar = ctk.CTkFrame(frame, fg_color=SURFACE_RAISED, corner_radius=0, height=38)
+        toolbar.pack(fill="x")
+        toolbar.pack_propagate(False)
+
+        self._live_dot = ctk.CTkLabel(
+            toolbar, text="● Live",
+            font=ctk.CTkFont(size=11), text_color=GREEN,
+        )
+        self._live_dot.pack(side="left", padx=12, pady=8)
+
+        ctk.CTkButton(
+            toolbar, text="Clear", width=70, height=26,
+            fg_color="transparent", hover_color=LINE,
+            border_width=1, border_color=LINE, text_color=MUTED,
+            font=ctk.CTkFont(size=11),
+            command=self._clear_live_logs,
+        ).pack(side="right", padx=8, pady=6)
+
+        self._live_log_box = ctk.CTkTextbox(
+            frame,
+            font=ctk.CTkFont(family="Consolas", size=10),
+            fg_color="#060810", text_color=TEXT_SOFT,
+            corner_radius=0, wrap="none", state="disabled",
+        )
+        self._live_log_box.pack(fill="both", expand=True)
+        inner: tk.Text = self._live_log_box._textbox  # type: ignore[attr-defined]
+        for lvl, col in (("DEBUG", MUTED), ("INFO", TEXT_SOFT),
+                         ("WARNING", YELLOW), ("ERROR", RED), ("CRITICAL", RED)):
+            inner.tag_config(lvl, foreground=col)
+
+        frame.on_tab_enter = self._start_live_logs  # type: ignore[attr-defined]
+        frame.on_tab_leave = self._stop_live_logs   # type: ignore[attr-defined]
+        return frame
+
+    def _live_log_path(self):
+        if not self._agent_id:
+            return None
+        from manager.gui.config_manager import ConfigManager
+        return ConfigManager.programdata_agents_path() / self._agent_id / "logs" / "engine.log"
+
+    def _start_live_logs(self) -> None:
+        self._live_log_fresh = True
+        self._stop_live_logs()
+        self._live_log_tick()
+
+    def _stop_live_logs(self) -> None:
+        if self._live_log_job is not None:
+            try:
+                self.after_cancel(self._live_log_job)
+            except Exception:
+                pass
+            self._live_log_job = None
+
+    def _live_log_tick(self) -> None:
+        self._live_log_job = None
+        try:
+            self._update_live_logs()
+        except Exception:
+            pass
+        self._live_log_job = self.after(2000, self._live_log_tick)
+
+    def _update_live_logs(self) -> None:
+        path = self._live_log_path()
+        if not path or not path.exists():
+            return
+
+        file_size = path.stat().st_size
+
+        if self._live_log_fresh:
+            self._live_log_fresh = False
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                all_lines = fh.readlines()
+            lines = all_lines[-300:]
+            self._live_log_offset = file_size
+            inner: tk.Text = self._live_log_box._textbox  # type: ignore[attr-defined]
+            self._live_log_box.configure(state="normal")
+            inner.delete("1.0", "end")
+            for line in lines:
+                lvl = _log_level(line.rstrip())
+                inner.insert("end", line if line.endswith("\n") else line + "\n", lvl)
+            self._live_log_box.configure(state="disabled")
+            inner.see("end")
+            return
+
+        if file_size < self._live_log_offset:
+            self._live_log_offset = 0
+
+        if file_size == self._live_log_offset:
+            return
+
+        with open(path, "rb") as fh:
+            fh.seek(self._live_log_offset)
+            new_bytes = fh.read()
+        self._live_log_offset = file_size
+
+        if not new_bytes:
+            return
+
+        new_text = new_bytes.decode("utf-8", errors="replace")
+        lines = new_text.splitlines(keepends=True)
+        inner: tk.Text = self._live_log_box._textbox  # type: ignore[attr-defined]
+        self._live_log_box.configure(state="normal")
+        for line in lines:
+            lvl = _log_level(line.rstrip())
+            inner.insert("end", line if line.endswith("\n") else line + "\n", lvl)
+        self._live_log_box.configure(state="disabled")
+        inner.see("end")
+
+    def _clear_live_logs(self) -> None:
+        inner: tk.Text = self._live_log_box._textbox  # type: ignore[attr-defined]
+        self._live_log_box.configure(state="normal")
+        inner.delete("1.0", "end")
+        self._live_log_box.configure(state="disabled")
+
     # ── Navigation hooks ───────────────────────────────────────────────────────
 
     def on_navigate_to(self) -> None:
         aid = self.app.manager_state.selected_agent_id
         if aid and aid != self._agent_id:
             self._agent_id = aid
+            self._live_log_offset = 0
+            self._live_log_fresh = True
+            self._locally_paused = False
             self._refresh_from_state()
             self._load_logs()
         elif aid == self._agent_id:
@@ -392,9 +525,19 @@ class AgentDashboardPage(ctk.CTkFrame):
             text="OK" if agent.gateway_connected else "✕",
             text_color=GREEN if agent.gateway_connected else RED,
         )
+        self._open_trades = agent.open_trades
         can_command = agent.status in ("RUNNING", "DEGRADED")
-        self._btn_pause.configure(state="normal" if can_command else "disabled")
-        self._btn_resume.configure(state="normal" if can_command else "disabled")
+        if not can_command:
+            self._locally_paused = False
+        self._btn_pause.configure(
+            state="normal" if (can_command and not self._locally_paused) else "disabled"
+        )
+        self._btn_resume.configure(
+            state="normal" if (can_command and self._locally_paused) else "disabled"
+        )
+        self._btn_emergency.configure(
+            state="normal" if (can_command and agent.open_trades > 0) else "disabled"
+        )
 
     # ── Commands ───────────────────────────────────────────────────────────────
 
@@ -402,6 +545,8 @@ class AgentDashboardPage(ctk.CTkFrame):
         if not self._agent_id:
             return
         self._ctrl_banner.show(f"Sending {command}…", "info")
+        self._btn_pause.configure(state="disabled")
+        self._btn_resume.configure(state="disabled")
         self.app.manager_client.send_agent_command(
             self._agent_id, command,
             on_done=lambda ok, err: self.after(0, lambda: self._on_command_done(command, ok, err)),
@@ -411,6 +556,7 @@ class AgentDashboardPage(ctk.CTkFrame):
         if not self._agent_id:
             return
         self._ctrl_banner.show("Sending emergency stop…", "warn")
+        self._btn_emergency.configure(state="disabled")
         self.app.manager_client.send_agent_command(
             self._agent_id, "emergency_stop",
             on_done=lambda ok, err: self.after(0, lambda: self._on_command_done("emergency_stop", ok, err)),
@@ -419,8 +565,16 @@ class AgentDashboardPage(ctk.CTkFrame):
     def _on_command_done(self, command: str, ok: bool, error: str | None) -> None:
         if ok:
             self._ctrl_banner.show(f"{command} acknowledged.", "good", auto_dismiss_after_ms=3000)
+            if command == "pause":
+                self._locally_paused = True
+            elif command == "resume":
+                self._locally_paused = False
         else:
             self._ctrl_banner.show(f"Command failed: {error or 'unknown error'}", "danger")
+        # Refresh button states based on latest agent state
+        agent = self.app.manager_state.get_agent(self._agent_id) if self._agent_id else None
+        if agent:
+            self._apply_agent(agent)
 
     # ── Logs ───────────────────────────────────────────────────────────────────
 
