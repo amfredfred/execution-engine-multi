@@ -46,6 +46,13 @@ class TradeRepository:
             logger.exception("TradeRepository: failed to save trade %s", trade.id)
             return False
 
+    def health_check(self) -> bool:
+        try:
+            return self._db.health_check()
+        except Exception:
+            logger.exception("TradeRepository: persistence health check failed")
+            return False
+
     def delete(self, trade_id: str) -> None:
         """
         Kept for interface compatibility.
@@ -126,6 +133,7 @@ class TradeRepository:
                 planned_at=0,
                 signal=None,
                 risk_multiplier=plan_d.get("riskMultiplier", 1.0),
+                tp1_lots=plan_d.get("tp1Lots", row.get("tp1_lots") or 0.0),
             )
 
             return Trade(
@@ -139,11 +147,13 @@ class TradeRepository:
                 entry_price=row.get("entry_price"),
                 entry_lots=row.get("entry_lots") or 0.0,
                 current_lots=row.get("current_lots") or 0.0,
+                tp1_lots=row.get("tp1_lots") or plan_d.get("tp1Lots", 0.0),
                 stop_loss=row.get("stop_loss") or 0.0,
                 tp1=row.get("tp1") or 0.0,
                 tp2=row.get("tp2") or 0.0,
                 tp1_hit=bool(row.get("tp1_hit")),
                 tp1_hit_at=row.get("tp1_hit_at"),
+                tp1_close_price=row.get("tp1_close_price"),
                 tp2_hit=bool(row.get("tp2_hit")),
                 tp2_hit_at=row.get("tp2_hit_at"),
                 sl_hit=bool(row.get("sl_hit")),
@@ -167,7 +177,6 @@ class TradeRepository:
                 row.get("id"),
             )
             return None
-
 
 
 

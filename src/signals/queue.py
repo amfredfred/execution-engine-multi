@@ -46,7 +46,7 @@ class SignalQueue:
     def __init__(self, on_signal: Callable[[InboundSignal], None]) -> None:
         self._on_signal: Callable[[InboundSignal], None] = on_signal
         self._queue: queue.Queue[InboundSignal] = queue.Queue(maxsize=MAX_QUEUE_SIZE)
-        self._queued_symbols: Set[str] = set()
+        self._queued_ids: Set[str] = set()
         self._symbols_lock: threading.Lock = threading.Lock()
         self._stopped: threading.Event = threading.Event()
         self._paused: threading.Event = threading.Event()
@@ -87,7 +87,7 @@ class SignalQueue:
         """
         with self._symbols_lock:
             signal = replace(signal, queued_at=signal.queued_at or now_ms())
-            if signal.resolved_symbol in self._queued_symbols:
+            if signal.id in self._queued_ids:
                 logger.debug(
                     "SignalQueue: dropped — symbol already queued",
                     extra={"signal_id": signal.id, "symbol": signal.resolved_symbol},
@@ -96,7 +96,7 @@ class SignalQueue:
 
             try:
                 self._queue.put_nowait(signal)
-                self._queued_symbols.add(signal.resolved_symbol)
+                self._queued_ids.add(signal.id)
                 logger.debug(
                     "SignalQueue: enqueued",
                     extra={
@@ -158,5 +158,5 @@ class SignalQueue:
                 # second signal for the same symbol cannot enter the queue while
                 # the first one is still being executed.
                 with self._symbols_lock:
-                    self._queued_symbols.discard(signal.resolved_symbol)
+                    self._queued_ids.discard(signal.id)
                 self._queue.task_done()

@@ -145,7 +145,7 @@ class AgentDashboardPage(ctk.CTkFrame):
         metrics_row = ctk.CTkFrame(frame, fg_color="transparent")
         metrics_row.pack(fill="x", padx=24)
         self._metric_widgets: dict[str, ctk.CTkLabel] = {}
-        for label in ("Balance", "Equity", "Open Trades", "Uptime", "MT5", "Gateway"):
+        for label in ("Balance", "Equity", "Open Trades", "Uptime", "MT5", "IPC"):
             card = ctk.CTkFrame(
                 metrics_row, fg_color=SURFACE_RAISED,
                 corner_radius=8, border_width=1, border_color=LINE,
@@ -388,14 +388,13 @@ class AgentDashboardPage(ctk.CTkFrame):
             text="OK" if agent.mt5_connected else "✕",
             text_color=GREEN if agent.mt5_connected else RED,
         )
-        self._metric_widgets["Gateway"].configure(
+        self._metric_widgets["IPC"].configure(
             text="OK" if agent.gateway_connected else "✕",
             text_color=GREEN if agent.gateway_connected else RED,
         )
-        running = agent.status == "RUNNING"
-        paused  = agent.status == "PAUSED"
-        self._btn_pause.configure(state="normal" if running else "disabled")
-        self._btn_resume.configure(state="normal" if (not running or paused) else "disabled")
+        can_command = agent.status in ("RUNNING", "DEGRADED")
+        self._btn_pause.configure(state="normal" if can_command else "disabled")
+        self._btn_resume.configure(state="normal" if can_command else "disabled")
 
     # ── Commands ───────────────────────────────────────────────────────────────
 

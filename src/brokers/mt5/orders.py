@@ -80,7 +80,11 @@ class Mt5Orders:
         if result is None:
             raise RuntimeError(f"order_send returned None — MT5 error: {error}")
 
-        if result.retcode not in (MT5_RETCODE_DONE, MT5_RETCODE_PLACED):
+        if result.retcode == MT5_RETCODE_PLACED:
+            raise RuntimeError(
+                "order_send placed but not filled; broker confirmation required"
+            )
+        if result.retcode != MT5_RETCODE_DONE:
             raise RuntimeError(
                 f"order_send failed: retcode={result.retcode} comment={result.comment}"
             )
@@ -94,6 +98,7 @@ class Mt5Orders:
             },
         )
         metrics.increment("mt5.orders.opened")
+        self._confirm_open(result.order, result.volume)
 
         return OrderResult(
             ticket=result.order,
@@ -164,6 +169,7 @@ class Mt5Orders:
         }
 
         with _MT5_LOCK:
+            before = self._mt5.positions_get(ticket=ticket)
             result = self._mt5.order_send(request)
             if result is None:
                 error = self._mt5.last_error()
@@ -171,7 +177,11 @@ class Mt5Orders:
         if result is None:
             raise RuntimeError(f"close_position returned None: {error}")
 
-        if result.retcode not in (MT5_RETCODE_DONE, MT5_RETCODE_PLACED):
+        if result.retcode == MT5_RETCODE_PLACED:
+            raise RuntimeError(
+                "close_position placed but not completed; broker confirmation required"
+            )
+        if result.retcode != MT5_RETCODE_DONE:
             raise RuntimeError(
                 f"close_position failed: retcode={result.retcode} comment={result.comment}"
             )
@@ -181,6 +191,7 @@ class Mt5Orders:
             extra={"ticket": ticket, "volume": volume, "price": result.price},
         )
         metrics.increment("mt5.orders.closed")
+        self._confirm_close(ticket, volume, before)
 
         return OrderResult(
             ticket=result.order,
@@ -189,3 +200,31 @@ class Mt5Orders:
             retcode=result.retcode,
             comment=result.comment,
         )
+
+    def _confirm_open(self, ticket: int, filled_volume: float) -> None:
+        with _MT5_LOCK:
+            positions = self._mt5.positions_get(ticket=ticket)
+            error = self._mt5.last_error() if positions is None else None
+        if positions is None:
+            raise RuntimeError(f"Cannot confirm opened position {ticket}: {error}")
+        if not positions or float(positions[0].volume) + 1e-9 < filled_volume:
+            raise RuntimeError(
+                f"Broker did not confirm opened position {ticket} volume {filled_volume}"
+            )
+
+    def _confirm_close(self, ticket: int, closed_volume: float, before) -> None:
+        if before is None:
+            raise RuntimeError(f"Cannot confirm pre-close position state for {ticket}")
+        before_volume = float(before[0].volume) if before else 0.0
+        with _MT5_LOCK:
+            after = self._mt5.positions_get(ticket=ticket)
+            error = self._mt5.last_error() if after is None else None
+        if after is None:
+            raise RuntimeError(f"Cannot confirm closed position {ticket}: {error}")
+        after_volume = float(after[0].volume) if after else 0.0
+        expected_max = max(0.0, before_volume - closed_volume)
+        if after_volume > expected_max + 1e-9:
+            raise RuntimeError(
+                f"Broker position {ticket} volume did not decrease as requested "
+                f"({before_volume} -> {after_volume}, requested {closed_volume})"
+            )

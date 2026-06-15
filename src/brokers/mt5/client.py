@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 _RECONNECT_DELAYS = [2, 4, 8, 16, 30]  # seconds, capped at last value
 _OFFSET_SYMBOLS = ["BTCUSD", "ETHUSD", "BTCUSDT", "ETHUSDT", "EURUSD"]  # always live
 _MT5_LOCK = threading.Lock()
-_SYMBOL_CACHE: dict[str, str] = {}
 
 
 class Mt5Client:
@@ -34,6 +33,7 @@ class Mt5Client:
     def __init__(self, config: Mt5Config) -> None:
         self._config = config
         self._connected = False
+        self._symbol_cache: dict[str, str] = {}
         self.broker_utc_offset_hours: int = 0  # derived once on connect()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
@@ -80,29 +80,22 @@ class Mt5Client:
             },
         )
         self._connected = True
+        self._symbol_cache.clear()
         self.broker_utc_offset_hours = self._derive_broker_utc_offset()
 
     def resolve_symbol(self, base_symbol: str) -> str | None:
         """
-        Resolve broker symbol safely and deterministically.
+        Resolve a canonical symbol through an exact broker-symbol mapping.
 
-        Resolution order
-        ----------------
-        1. Exact match
-        2. Unique flexible match
-        3. Shortest symbol name among ambiguous matches
-
-        Examples
-        --------
-        BTCUSD      -> BTCUSDm (shortest of BTCUSDm, BTCUSD., BTCUSD_x100)
-        US500       -> US500m (shortest of US500m, US500_x100m)
-        XAUUSD      -> XAUUSD. (if that's the shortest)
+        Broker suffixes and prefixes must be configured explicitly in
+        ``mt5.symbol_mappings``.
         """
 
         clean = base_symbol.replace("/", "").replace("_", "").upper()
+        target = self._config.symbol_mappings.get(clean, clean)
 
         # Fast cache hit
-        cached = _SYMBOL_CACHE.get(clean)
+        cached = self._symbol_cache.get(clean)
         if cached:
             return cached
 
@@ -123,20 +116,19 @@ class Mt5Client:
             upper = name.upper()
 
             # 1. Exact match
-            if upper == clean:
+            if upper == target.upper():
                 exact_match = name
                 break
-
-            # 2. Flexible broker naming (starts with or ends with)
-            if upper.startswith(clean) or upper.endswith(clean):
-                matches.append(name)
 
         # Exact match wins immediately
         if exact_match:
             with _MT5_LOCK:
-                mt5.symbol_select(exact_match, True)
+                selected = mt5.symbol_select(exact_match, True)
+            if not selected:
+                logger.error("symbol_select(%r) failed: %s", exact_match, mt5.last_error())
+                return None
 
-            _SYMBOL_CACHE[clean] = exact_match
+            self._symbol_cache[clean] = exact_match
 
             logger.info(
                 "Symbol %r resolved via exact match → %r",
@@ -147,7 +139,12 @@ class Mt5Client:
 
         # No matches
         if not matches:
-            logger.warning("Symbol %r could not be resolved", base_symbol)
+            logger.warning(
+                "Symbol %r could not be resolved exactly as %r; configure "
+                "mt5.symbol_mappings for broker-specific names",
+                base_symbol,
+                target,
+            )
             return None
 
         # Single match
@@ -173,14 +170,15 @@ class Mt5Client:
             selected = mt5.symbol_select(resolved, True)
 
         if not selected:
-            logger.warning(
+            logger.error(
                 "symbol_select(%r) failed: %s",
                 resolved,
                 mt5.last_error(),
             )
+            return None
 
         # Cache resolved name
-        _SYMBOL_CACHE[clean] = resolved
+        self._symbol_cache[clean] = resolved
 
         return resolved
 
@@ -220,6 +218,7 @@ class Mt5Client:
             with _MT5_LOCK:
                 mt5.shutdown()
             self._connected = False
+            self._symbol_cache.clear()
             logger.info("MT5 disconnected")
 
     def is_connected(self) -> bool:

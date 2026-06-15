@@ -19,7 +19,7 @@ EngineStatusBadge   — Compact pill showing EngineLifecycle
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, Protocol
 
 import customtkinter as ctk
 
@@ -32,6 +32,11 @@ from manager.gui.theme import (
     INFO_BG, INFO_BORDER,
     Tone,
 )
+
+if TYPE_CHECKING:
+    class EngineLifecycle(Protocol):
+        color_key: str
+        label: str
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
 
@@ -97,7 +102,6 @@ class StatusCard(ctk.CTkFrame):
             self._badge.pack(side="right")
         bg  = _TONE_BG.get(tone, SURFACE_RAISED)
         fg  = _TONE_TEXT.get(tone, MUTED)
-        brd = _TONE_BORDER.get(tone, LINE)
         self._badge.configure(
             text=f"  {text}  ",
             text_color=fg,
@@ -514,7 +518,7 @@ class EngineStatusBadge(ctk.CTkFrame):
         )
         self._lbl.pack(padx=10, pady=4)
 
-    def update(self, lifecycle: "EngineLifecycle") -> None:  # type: ignore[name-defined]
+    def update(self, lifecycle: "EngineLifecycle") -> None:
         from manager.gui.theme import GREEN, RED, YELLOW, MUTED
         color = {
             "good":   GREEN,

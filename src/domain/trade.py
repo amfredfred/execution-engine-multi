@@ -134,9 +134,9 @@ class Trade:
                 "riskPercent": self.plan.risk_percent,
                 "riskRewardRatio": self.plan.risk_reward_ratio,
                 "riskMultiplier": self.plan.risk_multiplier,
+                "tp1Lots": self.plan.tp1_lots,
             },
         }
-
 
 
 

@@ -12,6 +12,7 @@ import logging
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from manager.app.models import (
@@ -67,6 +68,19 @@ class AgentRegistry:
                     pid             INTEGER
                 );
 
+                CREATE TABLE IF NOT EXISTS agent_allocations (
+                    agent_id        TEXT PRIMARY KEY,
+                    monitoring_port INTEGER NOT NULL UNIQUE,
+                    allocated_at    INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_crashes (
+                    agent_id        TEXT NOT NULL,
+                    crashed_at      INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_crashes
+                    ON agent_crashes(agent_id, crashed_at);
+
                 CREATE TABLE IF NOT EXISTS operations (
                     op_id           TEXT PRIMARY KEY,
                     agent_id        TEXT NOT NULL,
@@ -114,6 +128,30 @@ class AgentRegistry:
                     event_id       TEXT PRIMARY KEY,
                     agent_id       TEXT NOT NULL,
                     processed_at   INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS command_outcomes (
+                    command_id     TEXT PRIMARY KEY,
+                    agent_id       TEXT NOT NULL,
+                    command_type   TEXT NOT NULL,
+                    status         TEXT NOT NULL,
+                    error          TEXT,
+                    created_at     INTEGER NOT NULL,
+                    completed_at   INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS signal_deliveries (
+                    signal_id      TEXT NOT NULL,
+                    agent_id       TEXT NOT NULL,
+                    payload_json   TEXT NOT NULL,
+                    status         TEXT NOT NULL,
+                    command_id     TEXT,
+                    attempts       INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at INTEGER NOT NULL,
+                    expires_at     INTEGER NOT NULL,
+                    error          TEXT,
+                    updated_at     INTEGER NOT NULL,
+                    PRIMARY KEY (signal_id, agent_id)
                 );
             """)
         logger.info("AgentRegistry initialised at %s", self._db_path)
@@ -174,6 +212,42 @@ class AgentRegistry:
         """Delete an agent registration after its process and leases are gone."""
         with self._connect() as conn:
             conn.execute("DELETE FROM agents WHERE agent_id=?", (agent_id,))
+            conn.execute("DELETE FROM agent_allocations WHERE agent_id=?", (agent_id,))
+
+    def allocate_agent_identity(
+        self, base_port: int = 8081, max_port: int = 8999
+    ) -> tuple[str, int]:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            agent_ids = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT agent_id FROM agents UNION SELECT agent_id FROM agent_allocations"
+                )
+            }
+            ports = {
+                int(row[0])
+                for row in conn.execute(
+                    """SELECT monitoring_port FROM agents
+                       UNION SELECT monitoring_port FROM agent_allocations"""
+                )
+            }
+            agent_id = next(
+                (f"agent-{i}" for i in range(1000) if f"agent-{i}" not in agent_ids),
+                f"agent-{uuid.uuid4().hex[:8]}",
+            )
+            port = next((p for p in range(base_port, max_port + 1) if p not in ports), None)
+            if port is None:
+                raise RuntimeError("No monitoring port available")
+            conn.execute(
+                "INSERT INTO agent_allocations VALUES (?,?,?)",
+                (agent_id, port, _now_ms()),
+            )
+        return agent_id, port
+
+    def release_agent_allocation(self, agent_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM agent_allocations WHERE agent_id=?", (agent_id,))
 
     def set_agent_status(
         self,
@@ -209,17 +283,26 @@ class AgentRegistry:
                 (_now_ms(), agent_id),
             )
 
-    def increment_crash_count(self, agent_id: str) -> int:
+    def increment_crash_count(self, agent_id: str, window_ms: int = 300_000) -> int:
         now = _now_ms()
         with self._connect() as conn:
             conn.execute(
-                "UPDATE agents SET crash_count=crash_count+1, last_crash_at=?, updated_at=? WHERE agent_id=?",
-                (now, now, agent_id),
+                "INSERT INTO agent_crashes VALUES (?,?)",
+                (agent_id, now),
             )
-            row = conn.execute(
-                "SELECT crash_count FROM agents WHERE agent_id=?", (agent_id,)
-            ).fetchone()
-        return row[0] if row else 0
+            conn.execute(
+                "DELETE FROM agent_crashes WHERE crashed_at < ?",
+                (now - window_ms,),
+            )
+            count = int(conn.execute(
+                "SELECT COUNT(*) FROM agent_crashes WHERE agent_id=?",
+                (agent_id,),
+            ).fetchone()[0])
+            conn.execute(
+                "UPDATE agents SET crash_count=?, last_crash_at=?, updated_at=? WHERE agent_id=?",
+                (count, now, now, agent_id),
+            )
+        return count
 
     def reset_crash_count(self, agent_id: str) -> None:
         with self._connect() as conn:
@@ -227,6 +310,7 @@ class AgentRegistry:
                 "UPDATE agents SET crash_count=0, last_crash_at=NULL, updated_at=? WHERE agent_id=?",
                 (_now_ms(), agent_id),
             )
+            conn.execute("DELETE FROM agent_crashes WHERE agent_id=?", (agent_id,))
 
     # ── Terminal leases ───────────────────────────────────────────────────
 
@@ -254,6 +338,13 @@ class AgentRegistry:
         with self._connect() as conn:
             conn.execute(
                 "DELETE FROM terminal_leases WHERE agent_id=?", (agent_id,)
+            )
+
+    def set_agent_lease_pid(self, agent_id: str, pid: int | None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE terminal_leases SET pid=? WHERE agent_id=?",
+                (pid, agent_id),
             )
 
     def get_terminal_lease(self, terminal_path: str) -> TerminalLease | None:
@@ -316,6 +407,42 @@ class AgentRegistry:
             error=row["error"],
         )
 
+    def recover_interrupted_operations(self) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """UPDATE operations SET status='failed', completed_at=?, error=?
+                   WHERE status IN ('pending','running')""",
+                (_now_ms(), "Manager restarted before operation completed"),
+            )
+        return cursor.rowcount
+
+    def enforce_retention(self, older_than_ms: int = 30 * 86_400_000) -> dict[str, int]:
+        cutoff = _now_ms() - older_than_ms
+        deleted: dict[str, int] = {}
+        with self._connect() as conn:
+            for table, column in (
+                ("manager_events", "created_at"),
+                ("operations", "completed_at"),
+                ("processed_worker_events", "processed_at"),
+                ("command_outcomes", "completed_at"),
+            ):
+                cursor = conn.execute(
+                    f"DELETE FROM {table} WHERE {column} IS NOT NULL AND {column} < ?",
+                    (cutoff,),
+                )
+                deleted[table] = cursor.rowcount
+            cursor = conn.execute(
+                """DELETE FROM signal_deliveries
+                   WHERE status NOT IN ('pending','sent') AND updated_at < ?""",
+                (cutoff,),
+            )
+            deleted["signal_deliveries"] = cursor.rowcount
+        return deleted
+
+    def health_check(self) -> bool:
+        with self._connect() as conn:
+            return int(conn.execute("SELECT 1").fetchone()[0]) == 1
+
     # ── Events ────────────────────────────────────────────────────────────
 
     def emit_event(self, event: str, agent_id: str | None, payload: dict) -> None:
@@ -352,6 +479,17 @@ class AgentRegistry:
             ).fetchone()
         return int(row[0]) if row else None
 
+    def current_config_revision(self, agent_id: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT revision FROM config_revisions
+                   WHERE agent_id=? AND status IN ('desired', 'active')
+                   ORDER BY CASE status WHEN 'desired' THEN 0 ELSE 1 END, revision DESC
+                   LIMIT 1""",
+                (agent_id,),
+            ).fetchone()
+        return int(row[0]) if row else 1
+
     def activate_config_revision(self, agent_id: str, revision: int) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -378,6 +516,112 @@ class AgentRegistry:
                 "INSERT OR IGNORE INTO processed_worker_events VALUES (?,?,?)",
                 (event_id, agent_id, _now_ms()),
             )
+
+    def record_command(
+        self, command_id: str, agent_id: str, command_type: str, status: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO command_outcomes
+                   (command_id, agent_id, command_type, status, created_at)
+                   VALUES (?,?,?,?,?)
+                   ON CONFLICT(command_id) DO UPDATE SET status=excluded.status""",
+                (command_id, agent_id, command_type, status, _now_ms()),
+            )
+
+    def complete_command(
+        self, command_id: str, status: str, error: str | None = None
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE command_outcomes
+                   SET status=?, error=?, completed_at=? WHERE command_id=?""",
+                (status, error, _now_ms(), command_id),
+            )
+
+    def get_command_outcome(self, command_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM command_outcomes WHERE command_id=?", (command_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def queue_signal_delivery(
+        self, signal_id: str, agent_id: str, payload: dict, expires_at: int
+    ) -> None:
+        now = _now_ms()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO signal_deliveries
+                   (signal_id, agent_id, payload_json, status, next_attempt_at,
+                    expires_at, updated_at)
+                   VALUES (?,?,?,'pending',?,?,?)""",
+                (signal_id, agent_id, json.dumps(payload), now, expires_at, now),
+            )
+
+    def record_signal_outcome(
+        self, signal_id: str, agent_id: str, payload: dict, status: str, error: str = ""
+    ) -> None:
+        now = _now_ms()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO signal_deliveries
+                   (signal_id, agent_id, payload_json, status, next_attempt_at,
+                    expires_at, error, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)
+                   ON CONFLICT(signal_id, agent_id) DO UPDATE SET
+                     status=excluded.status, error=excluded.error,
+                     updated_at=excluded.updated_at""",
+                (signal_id, agent_id, json.dumps(payload), status, now, now, error, now),
+            )
+
+    def list_due_signal_deliveries(self, now_ms: int) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM signal_deliveries
+                   WHERE status IN ('pending','sent') AND next_attempt_at <= ?
+                   ORDER BY next_attempt_at""",
+                (now_ms,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_signal_delivery(
+        self,
+        signal_id: str,
+        agent_id: str,
+        *,
+        status: str,
+        command_id: str | None = None,
+        attempts: int | None = None,
+        next_attempt_at: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        fields = ["status=?", "updated_at=?"]
+        values: list[object] = [status, _now_ms()]
+        for name, value in (
+            ("command_id", command_id),
+            ("attempts", attempts),
+            ("next_attempt_at", next_attempt_at),
+            ("error", error),
+        ):
+            if value is not None:
+                fields.append(f"{name}=?")
+                values.append(value)
+        values.extend([signal_id, agent_id])
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE signal_deliveries SET {', '.join(fields)} "
+                "WHERE signal_id=? AND agent_id=?",
+                values,
+            )
+
+    def get_signal_delivery(self, signal_id: str, agent_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM signal_deliveries WHERE signal_id=? AND agent_id=?",
+                (signal_id, agent_id),
+            ).fetchone()
+        return dict(row) if row else None
 
     # ── Device identity ───────────────────────────────────────────────────
 

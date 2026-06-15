@@ -26,6 +26,7 @@ from src.infra.database import TradeRepository
 from src.domain.position import PositionSide
 from src.domain.trade import CloseReason, Trade, TradeStatus
 from src.utils.time import now_ms
+from src.utils.price import normalise_lots
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,12 @@ class PositionManager:
                     ticket=pos.ticket,
                     symbol=pos.symbol,
                     side=order_type,
-                    volume=pos.lots,
+                    volume=normalise_lots(
+                        pos.lots,
+                        symbol_info.volume_step,
+                        symbol_info.volume_min,
+                        symbol_info.volume_max,
+                    ),
                     price=close_price,
                     slippage=self._cfg.slippage,
                     magic=self._cfg.magic,
@@ -146,6 +152,36 @@ class PositionManager:
                 f"Emergency stop completed with {len(errors)} error(s): "
                 + "; ".join(errors)
             )
+
+    def close_trade(self, trade_id: str) -> None:
+        trade = self._store.get(trade_id)
+        if trade is None or trade.entry_ticket is None:
+            raise ValueError(f"Open trade {trade_id} not found")
+        positions = self._mt5_pos.get_open_positions(self._cfg.magic)
+        position = next((p for p in positions if p.ticket == trade.entry_ticket), None)
+        if position is None:
+            raise ValueError(f"Broker position for trade {trade_id} not found")
+        symbol_info = self._mt5_pos.get_symbol_info(position.symbol)
+        tick = self._mt5_pos.get_current_tick(position.symbol)
+        if tick is None:
+            raise RuntimeError(f"No tick data for {position.symbol}")
+        is_buy = position.side == PositionSide.BUY
+        self._mt5_orders.close_position(
+            ticket=position.ticket,
+            symbol=position.symbol,
+            side=Mt5OrderType.BUY if is_buy else Mt5OrderType.SELL,
+            volume=normalise_lots(
+                position.lots,
+                symbol_info.volume_step,
+                symbol_info.volume_min,
+                symbol_info.volume_max,
+            ),
+            price=tick.bid if is_buy else tick.ask,
+            slippage=self._cfg.slippage,
+            magic=self._cfg.magic,
+            comment="manager-close",
+            filling_mode=symbol_info.order_filling_mode,
+        )
 
     # ── Startup hydration ─────────────────────────────────────────────────────
 
@@ -232,7 +268,8 @@ class PositionManager:
         try:
             loss_pct, start_equity, current_equity = self._mt5_pos.get_daily_pnl_info(self._cfg.magic)
             self._execution_engine.update_daily_loss(loss_pct, start_equity, current_equity)
-        except Exception:
+        except Exception as exc:
+            self._execution_engine.mark_risk_data_unavailable(str(exc))
             logger.warning("PositionManager: failed to refresh daily loss pct")
 
         try:
@@ -334,12 +371,12 @@ class PositionManager:
         )
 
         # ── Step 1: Partial close ─────────────────────────────────────────
-        partial_closed = False
-        tp1_close_price: float | None = None
+        partial_closed = trade.tp1_close_price is not None
+        tp1_close_price: float | None = trade.tp1_close_price
         symbol_info = None
         tick = None
 
-        if trade.tp1_lots > 0 and trade.entry_ticket:
+        if trade.tp1_lots > 0 and trade.entry_ticket and not partial_closed:
             try:
                 symbol_info = self._mt5_pos.get_symbol_info(trade.symbol)
                 tick = self._mt5_pos.get_current_tick(trade.symbol)
@@ -354,7 +391,12 @@ class PositionManager:
                     ticket=trade.entry_ticket,
                     symbol=trade.symbol,
                     side=order_type,
-                    volume=trade.tp1_lots,
+                    volume=normalise_lots(
+                        trade.tp1_lots,
+                        symbol_info.volume_step,
+                        symbol_info.volume_min,
+                        min(symbol_info.volume_max, trade.current_lots),
+                    ),
                     price=close_price,
                     slippage=self._cfg.slippage,
                     magic=self._cfg.magic,
@@ -363,6 +405,16 @@ class PositionManager:
                 )
                 tp1_close_price = close_price
                 partial_closed = True
+                partial_state = self._store.update(
+                    trade.id,
+                    tp1_close_price=tp1_close_price,
+                    current_lots=round(trade.current_lots - trade.tp1_lots, 2),
+                    status=TradeStatus.PARTIALLY_CLOSED,
+                )
+                if partial_state and not self._repo.save(partial_state):
+                    raise RuntimeError(
+                        "TP1 partial close completed but state persistence failed"
+                    )
                 logger.info(
                     "TP1 partial close executed",
                     extra={
@@ -444,12 +496,14 @@ class PositionManager:
                 )
 
         # ── Step 3: Update in-memory store and persist ────────────────────
+        if trade.tp1_lots > 0 and not partial_closed:
+            return
+        if self._cfg.move_sl_to_be_on_tp1 and not be_ok:
+            return
+
         new_sl = be_sl if be_ok else trade.stop_loss
-        new_current_lots = (
-            round(trade.current_lots - trade.tp1_lots, 2)
-            if partial_closed
-            else trade.current_lots
-        )
+        latest = self._store.get(trade.id) or trade
+        new_current_lots = latest.current_lots
         from src.domain.trade import TradeStatus as _TS
 
         new_status = _TS.PARTIALLY_CLOSED if partial_closed else trade.status
@@ -464,7 +518,12 @@ class PositionManager:
             stop_loss=new_sl,
         )
         if updated:
-            self._repo.save(updated)
+            if not self._repo.save(updated):
+                logger.error(
+                    "PositionManager: TP1 completion persistence failed; retrying next poll",
+                    extra={"trade_id": trade.id, "ticket": trade.entry_ticket},
+                )
+                return
             self._bus.emit(Events.TRADE_TP1_HIT, updated)
             metrics.increment("trades.tp1_hit")
 

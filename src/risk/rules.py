@@ -78,6 +78,12 @@ def loss_guard_rule(ctx: RuleContext) -> RuleResult:
     if ctx.loss_tracker is None:
         return RuleResult(approved=True)
 
+    fresh, freshness_error = ctx.loss_tracker.risk_data_status()
+    if not fresh:
+        return RuleResult(
+            approved=False,
+            reason=f"Loss guard: risk data unavailable: {freshness_error}",
+        )
     paused, reason = ctx.loss_tracker.is_paused()
     if paused:
         return RuleResult(approved=False, reason=f"Loss guard: {reason}")

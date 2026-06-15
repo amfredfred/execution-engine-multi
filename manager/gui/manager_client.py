@@ -16,6 +16,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from manager.app.secrets import _dpapi_decrypt
+
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 3.0          # seconds
@@ -245,7 +247,9 @@ class ManagerClient:
 
     def _refresh_token(self) -> None:
         try:
-            self._token = self._token_path.read_text(encoding="utf-8").strip()
+            self._token = _dpapi_decrypt(
+                self._token_path.read_text(encoding="utf-8").strip()
+            )
         except FileNotFoundError:
             self._token = ""
 

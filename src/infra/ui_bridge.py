@@ -202,6 +202,7 @@ class UIBridge:
         self._stop_event: asyncio.Event | None             = None
         self._thread:     threading.Thread | None          = None
         self._clients:    set[Any]                         = set()
+        self._background_tasks: set[asyncio.Task[Any]]     = set()
 
         self._log_buf: collections.deque[dict] = collections.deque(maxlen=200)
         self._signal_buf: collections.deque[dict] = collections.deque(maxlen=100)
@@ -433,7 +434,9 @@ class UIBridge:
                 sig = _build_signal_event(event_name, payload)
                 if sig and self._clients:
                     frame = json.dumps({"type": "signal.opened", "payload": sig}, default=str)
-                    asyncio.ensure_future(self._broadcast_raw(frame))
+                    task = asyncio.create_task(self._broadcast_raw(frame))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
                 return {"type": event_name, "payload": trade_dict}
             except Exception:
                 return None

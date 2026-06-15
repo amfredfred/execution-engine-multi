@@ -29,7 +29,7 @@ def _worker_main(engine_id: str) -> None:
     try:
         config_path = sys.argv[sys.argv.index("--agent") + 2]
     except (ValueError, IndexError):
-        raise SystemExit("Usage: --agent <engine_id> <config_path>")
+        raise SystemExit("Usage: --agent <engine_id> <config_path>") from None
 
     config = AppConfig.from_yaml(config_path)
     setup_logging(config.log_level, config.engine_timezone)
@@ -39,6 +39,7 @@ def _worker_main(engine_id: str) -> None:
     lock_file = _acquire_lock(Path(config.storage_path) / "execution-engine.lock")
 
     container = build_container(config)
+    stop_event = threading.Event()
 
     worker_events = WorkerEventClient(
         engine_id=engine_id,
@@ -49,13 +50,13 @@ def _worker_main(engine_id: str) -> None:
         account_login=config.mt5.login,
         account_server=config.mt5.server,
         storage_path=config.storage_path,
+        config_revision=int(os.environ.get("ENGINE_CONFIG_REVISION", "1")),
+        on_stop_requested=stop_event.set,
     )
     container.signal_consumer.set_execution_event_sink(worker_events.emit_execution_event)
 
     bootstrap(container, config, expose_local_ui=False)
     worker_events.start()
-
-    stop_event = threading.Event()
 
     def stop(signum: int, _frame) -> None:
         logger.info("Worker %s stopping on %s", engine_id, signal.Signals(signum).name)
@@ -75,6 +76,7 @@ def _worker_main(engine_id: str) -> None:
 
 def _manager_main() -> None:
     import logging
+    import os
     import signal
     import threading
     from pathlib import Path
@@ -100,8 +102,13 @@ def _manager_main() -> None:
         engine_version=config.engine_version,
     )
     stop_event = threading.Event()
+    force_shutdown = os.environ.get("AQ_FORCE_MANAGER_SHUTDOWN") == "1"
 
     def stop(signum: int, _frame) -> None:
+        safe, reason = runtime.can_shutdown()
+        if not safe and not force_shutdown:
+            logger.error("%s Set AQ_FORCE_MANAGER_SHUTDOWN=1 to override.", reason)
+            return
         logger.info("Manager stopping on %s", signal.Signals(signum).name)
         stop_event.set()
 
@@ -112,7 +119,7 @@ def _manager_main() -> None:
         while not stop_event.wait(1):
             pass
     finally:
-        runtime.stop()
+        runtime.stop(force=force_shutdown)
         lock_file.close()
 
 
@@ -156,6 +163,22 @@ def _acquire_lock(path):
 
 
 def main() -> None:
+    if "--smoke-test" in sys.argv:
+        try:
+            mode = sys.argv[sys.argv.index("--smoke-test") + 1]
+        except (ValueError, IndexError):
+            raise SystemExit("Usage: --smoke-test <gui|manager|worker>") from None
+        if mode == "gui":
+            from manager.gui.app import ApexTraderGUI  # noqa: F401
+        elif mode == "manager":
+            from manager.app.service import ManagerRuntime  # noqa: F401
+        elif mode == "worker":
+            from src.app.bootstrap import bootstrap  # noqa: F401
+            from src.app.container import build_container  # noqa: F401
+        else:
+            raise SystemExit(f"Unknown smoke-test mode: {mode}")
+        print(f"{mode} packaged imports OK")
+        return
     worker_id = _get_worker_id()
     if worker_id:
         _worker_main(worker_id)

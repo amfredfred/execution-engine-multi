@@ -39,8 +39,8 @@ OutputBaseFilename=AQAgentSetup
 SetupIconFile=assets\icon.ico
 Compression=lzma2/max
 SolidCompression=yes
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 PrivilegesRequired=admin
 VersionInfoVersion={#MyAppVersion}
@@ -66,11 +66,11 @@ Name: "desktopicon"; \
 [Dirs]
 ; ============================================================================
 ; ProgramData — shared data store for Manager + all agents
-; Permissions: authusers-modify lets the task-scheduler process write without elevation
-Name: "{commonappdata}\Apex Quantel";                              Permissions: authusers-modify
-Name: "{commonappdata}\Apex Quantel\manager";                      Permissions: authusers-modify
-Name: "{commonappdata}\Apex Quantel\manager\logs";                 Permissions: authusers-modify
-Name: "{commonappdata}\Apex Quantel\manager\agents";               Permissions: authusers-modify
+; install_manager.ps1 applies a private runtime-identity/Admin/SYSTEM ACL.
+Name: "{commonappdata}\Apex Quantel"
+Name: "{commonappdata}\Apex Quantel\manager"
+Name: "{commonappdata}\Apex Quantel\manager\logs"
+Name: "{commonappdata}\Apex Quantel\manager\agents"
 
 ; ============================================================================
 [Files]

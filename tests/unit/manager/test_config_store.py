@@ -42,7 +42,10 @@ def _make_reg(tmp_path: Path, agent_id: str = "agent-0") -> AgentRegistration:
 
 @pytest.fixture
 def store():
-    return AgentConfigStore(secrets=MagicMock())
+    registry = MagicMock()
+    registry.get_or_create_device_name.return_value = "test-host"
+    registry.get_or_create_device_id.return_value = "12345678-1234-1234-1234-123456789abc"
+    return AgentConfigStore(secrets=MagicMock(), registry=registry)
 
 
 class TestConfigStoreSecrets:

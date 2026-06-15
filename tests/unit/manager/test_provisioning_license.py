@@ -3,7 +3,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from manager.app.provisioning import AgentProvisioner, LicensePreflightError
+from manager.app.provisioning import (
+    AgentProvisioner,
+    LicensePreflightError,
+    SlotLimitError,
+)
 
 
 def _provisioner(activation_key: str | None = "TR-VALID-LICENSE-KEY-1234"):
@@ -38,7 +42,7 @@ def test_get_license_info_reports_missing_manager_key() -> None:
     assert "No manager license key" in result["error"]
 
 
-@patch("src.manager.provisioning.urllib.request.urlopen")
+@patch("manager.app.provisioning.urllib.request.urlopen")
 def test_preflight_returns_gateway_symbols_without_saving(mock_urlopen) -> None:
     provisioner, _, secrets = _provisioner()
     mock_urlopen.return_value = _response({
@@ -55,7 +59,7 @@ def test_preflight_returns_gateway_symbols_without_saving(mock_urlopen) -> None:
     secrets.set_activation_key.assert_not_called()
 
 
-@patch("src.manager.provisioning.urllib.request.urlopen")
+@patch("manager.app.provisioning.urllib.request.urlopen")
 def test_set_activation_key_only_persists_verified_key(mock_urlopen) -> None:
     provisioner, registry, secrets = _provisioner()
     mock_urlopen.return_value = _response({"valid": True, "symbols": ["US100"]})
@@ -67,7 +71,7 @@ def test_set_activation_key_only_persists_verified_key(mock_urlopen) -> None:
     assert result["configured"] is True
 
 
-@patch("src.manager.provisioning.urllib.request.urlopen")
+@patch("manager.app.provisioning.urllib.request.urlopen")
 def test_set_activation_key_rejects_invalid_key(mock_urlopen) -> None:
     provisioner, _, secrets = _provisioner()
     mock_urlopen.return_value = _response({"valid": False})
@@ -76,3 +80,43 @@ def test_set_activation_key_rejects_invalid_key(mock_urlopen) -> None:
         provisioner.set_activation_key("TR-BAD-LICENSE-KEY-123456")
 
     secrets.set_activation_key.assert_not_called()
+
+
+def test_slot_verification_fails_closed_without_gateway() -> None:
+    provisioner, _, _ = _provisioner()
+    provisioner._gateway_http_url = ""
+
+    with pytest.raises(SlotLimitError, match="required"):
+        provisioner._check_slot_available()
+
+
+@patch("manager.app.provisioning.urllib.request.urlopen")
+def test_slot_verification_fails_closed_when_gateway_is_unreachable(mock_urlopen) -> None:
+    provisioner, _, _ = _provisioner()
+    mock_urlopen.side_effect = __import__("urllib.error").error.URLError("offline")
+
+    with pytest.raises(SlotLimitError, match="unavailable"):
+        provisioner._check_slot_available()
+
+
+def test_provision_rolls_back_directory_secret_and_lease_on_failure(tmp_path) -> None:
+    registry = MagicMock()
+    registry.acquire_terminal_lease.return_value = True
+    secrets = MagicMock()
+    config_store = MagicMock()
+    config_store.write_agent_config.side_effect = RuntimeError("write failed")
+    provisioner = AgentProvisioner(
+        registry, secrets, config_store, MagicMock(), str(tmp_path), "https://gateway"
+    )
+    provisioner._check_slot_available = MagicMock()
+    registry.allocate_agent_identity.return_value = ("agent-0", 8081)
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        provisioner.provision(
+            "Agent", "terminal.exe", 123, "password", "Broker", ["XAUUSD"]
+        )
+
+    assert not (tmp_path / "agent-0").exists()
+    secrets.set_secret.assert_not_called()
+    registry.upsert_agent.assert_not_called()
+    registry.release_agent_allocation.assert_called_once_with("agent-0")

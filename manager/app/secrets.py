@@ -91,8 +91,10 @@ class ManagerSecretStore:
         try:
             encrypted = _dpapi_encrypt(value)
         except Exception as exc:
-            logger.warning("DPAPI encrypt failed, storing plaintext: %s", exc)
-            encrypted = value
+            logger.error("DPAPI encrypt failed for %s/%s", agent_id, key)
+            raise RuntimeError(
+                f"Refusing to store secret {agent_id}/{key}: encryption failed"
+            ) from exc
         with self._reg._connect() as conn:
             conn.execute(
                 """INSERT INTO agent_secrets (agent_id, key, value, updated_at)

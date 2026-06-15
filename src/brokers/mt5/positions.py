@@ -13,6 +13,7 @@ from src.brokers.mt5.client import Mt5Client, _MT5_LOCK
 from src.brokers.mt5.types import Mt5PositionType
 from src.domain.position import AccountInfo, Position, PositionSide, SymbolInfo
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,8 @@ class Mt5Positions:
 
     def get_symbol_info(self, symbol: str) -> SymbolInfo:
         _resolved_symbol = self.resolve_symbol(symbol)
+        if not _resolved_symbol:
+            raise RuntimeError(f"Unable to resolve and select symbol {symbol!r}")
         self._client.ensure_connected()
         with _MT5_LOCK:
             info = self._mt5.symbol_info(_resolved_symbol)
@@ -101,13 +104,18 @@ class Mt5Positions:
 
         if not info.visible:
             with _MT5_LOCK:
-                self._mt5.symbol_select(_resolved_symbol, True)
+                selected = self._mt5.symbol_select(_resolved_symbol, True)
+                if not selected:
+                    error = self._mt5.last_error()
+                    raise RuntimeError(f"symbol_select({_resolved_symbol!r}) failed: {error}")
                 info = self._mt5.symbol_info(_resolved_symbol)
 
         with _MT5_LOCK:
             tick = self._mt5.symbol_info_tick(_resolved_symbol)
         ask = tick.ask if tick else 0.0
         bid = tick.bid if tick else 0.0
+        if tick is None or ask <= 0 or bid <= 0:
+            raise RuntimeError(f"No valid live tick for {_resolved_symbol!r}")
 
         return SymbolInfo(
             # Identity
@@ -221,41 +229,24 @@ class Mt5Positions:
         self._client.ensure_connected()
         try:
             # ── Time window: broker-local midnight → next midnight ─────────
-            offset_hours = self._client.broker_utc_offset_hours
-            now_utc      = datetime.now(timezone.utc)
-            now_broker   = (now_utc + timedelta(hours=offset_hours)).replace(tzinfo=None)
+            broker_tz = ZoneInfo(self._client._config.broker_timezone)
+            now_utc = datetime.now(timezone.utc)
+            now_broker = now_utc.astimezone(broker_tz).replace(tzinfo=None)
             from_dt      = datetime(now_broker.year, now_broker.month, now_broker.day)
             to_dt        = from_dt + timedelta(days=1)
 
             # ── Closed P&L for our magic (realised) ───────────────────────
-            try:
-                deals = self._history_deals_get(from_dt, to_dt)
-            except RuntimeError as exc:
-                logger.warning(
-                    "get_daily_pnl_info: closed PnL unavailable; "
-                    "continuing with live equity and floating PnL only: %s",
-                    exc,
-                    extra={
-                        "from_dt": from_dt,
-                        "to_dt": to_dt,
-                        "broker_utc_offset_hours": self._client.broker_utc_offset_hours,
-                    },
-                )
-                deals = []
+            deals = self._history_deals_get(from_dt, to_dt)
             realised_pnl = sum(
                 d.profit + d.swap + d.commission
                 for d in deals
-                if d.magic == magic and d.entry == self._client.mt5.DEAL_ENTRY_OUT
+                if d.entry == self._client.mt5.DEAL_ENTRY_OUT
             )
 
             # ── Floating P&L on currently open positions (unrealised) ─────
             with _MT5_LOCK:
                 open_positions = self._mt5.positions_get() or []
-            unrealised_pnl = sum(
-                p.profit
-                for p in open_positions
-                if p.magic == magic
-            )
+            unrealised_pnl = sum(p.profit for p in open_positions)
 
             total_pnl = realised_pnl + unrealised_pnl
 
@@ -264,7 +255,7 @@ class Mt5Positions:
                 account = self._mt5.account_info()
             if not account or account.equity <= 0:
                 logger.warning("get_daily_pnl_info: no valid account or equity <= 0")
-                return 0.0, 0.0, 0.0
+                raise RuntimeError("No valid account equity for daily PnL calculation")
 
             current_equity = account.equity
 
@@ -276,7 +267,7 @@ class Mt5Positions:
                     "(equity=%.2f total_pnl=%.2f) — returning 0",
                     current_equity, total_pnl,
                 )
-                return 0.0, current_equity, current_equity
+                raise RuntimeError("Derived start equity is non-positive")
 
             # No loss today — return early
             if total_pnl >= 0:
@@ -302,14 +293,18 @@ class Mt5Positions:
                     "from_dt": locals().get("from_dt"),
                     "to_dt": locals().get("to_dt"),
                     "broker_utc_offset_hours": self._client.broker_utc_offset_hours,
+                    "broker_timezone": self._client._config.broker_timezone,
                 },
             )
-            return 0.0, 0.0, 0.0
+            raise RuntimeError(f"Daily PnL calculation unavailable: {e}") from e
 
     def get_current_tick(self, symbol: str):
         self._client.ensure_connected()
         with _MT5_LOCK:
-            return self._mt5.symbol_info_tick(symbol)
+            tick = self._mt5.symbol_info_tick(symbol)
+        if tick is None or tick.ask <= 0 or tick.bid <= 0:
+            raise RuntimeError(f"No valid live tick for {symbol!r}")
+        return tick
 
     def get_deal_price_for_ticket(self, ticket: int) -> Optional[float]:
         """

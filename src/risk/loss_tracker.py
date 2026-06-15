@@ -23,11 +23,13 @@ Three intraday guards — all reset at midnight:
 from __future__ import annotations
 
 import logging
+import json
 import threading
 import time
 from collections import deque
 from datetime import datetime, date
 from typing import Deque
+from collections.abc import Callable
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -87,10 +89,15 @@ class LossTracker:
 
         # For display only — highest live equity seen today
         self._equity_peak: float = 0.0
+        self._risk_data_updated_at: int = 0
+        self._risk_data_error: str = ""
+        self._state_sink: Callable[[str], None] | None = None
 
     # ── Guard 1: Daily Loss ─────────────────────────────────────────────
     def update_daily_loss_pct(self, pct: float, start_equity: float) -> None:
         with self._lock:
+            self._risk_data_updated_at = _now_ms()
+            self._risk_data_error = ""
             self._current_pct = pct
             today = _today(self._tz)
             now = _now_ms()
@@ -141,6 +148,7 @@ class LossTracker:
                     f"Daily loss limit reached ({pct:.2f}% >= {self._limit:.2f}%)"
                 )
                 logger.warning(self._pause_reason)
+        self._persist_state()
 
     # ── Guard 2: Session Profit Drawdown ────────────────────────────────
     def record_trade_closed(self, realized_pnl: float) -> None:
@@ -180,6 +188,7 @@ class LossTracker:
                         f"current {self._session_closed_pnl:+,.2f})"
                     )
                     logger.warning(self._pause_reason)
+        self._persist_state()
 
     # ── Guard 3: Rolling Equity Window (+ display equity peak) ──────────
     def update_equity(self, equity: float) -> None:
@@ -217,6 +226,7 @@ class LossTracker:
                                     f"window {len(self._equity_window)})"
                                 )
                                 logger.warning(self._pause_reason)
+        self._persist_state()
 
     # ── Public API ──────────────────────────────────────────────────────
     def is_paused(self) -> tuple[bool, str]:
@@ -236,6 +246,60 @@ class LossTracker:
             risk_slots = max(1, int(max_losing_streak))
             return daily_budget / risk_slots
 
+    def mark_risk_data_unavailable(self, error: str) -> None:
+        with self._lock:
+            self._risk_data_error = error
+
+    def set_state_sink(self, sink: Callable[[str], None]) -> None:
+        self._state_sink = sink
+
+    def hydrate_state(self, raw: str | None) -> None:
+        if not raw:
+            return
+        value = json.loads(raw)
+        tracked_day = value.get("tracked_day")
+        if tracked_day != _today(self._tz).isoformat():
+            return
+        with self._lock:
+            self._tracked_day = date.fromisoformat(tracked_day)
+            self._current_pct = float(value.get("current_pct", 0.0))
+            self._start_of_day_equity = float(value.get("start_of_day_equity", 0.0))
+            self._paused_until = int(value.get("paused_until", 0))
+            self._pause_reason = str(value.get("pause_reason", ""))
+            self._session_closed_pnl = float(value.get("session_closed_pnl", 0.0))
+            self._session_closed_peak = float(value.get("session_closed_peak", 0.0))
+            self._profit_drawback_pct = float(value.get("profit_drawback_pct", 0.0))
+            self._equity_peak = float(value.get("equity_peak", 0.0))
+            self._equity_window.clear()
+            self._equity_window.extend(float(v) for v in value.get("equity_window", []))
+
+    def _persist_state(self) -> None:
+        if not self._state_sink:
+            return
+        with self._lock:
+            value = {
+                "tracked_day": self._tracked_day.isoformat() if self._tracked_day else None,
+                "current_pct": self._current_pct,
+                "start_of_day_equity": self._start_of_day_equity,
+                "paused_until": self._paused_until,
+                "pause_reason": self._pause_reason,
+                "session_closed_pnl": self._session_closed_pnl,
+                "session_closed_peak": self._session_closed_peak,
+                "profit_drawback_pct": self._profit_drawback_pct,
+                "equity_peak": self._equity_peak,
+                "equity_window": list(self._equity_window),
+            }
+        self._state_sink(json.dumps(value, separators=(",", ":")))
+
+    def risk_data_status(self, max_age_ms: int = 10_000) -> tuple[bool, str]:
+        with self._lock:
+            if self._risk_data_error:
+                return False, self._risk_data_error
+            age = _now_ms() - self._risk_data_updated_at
+            if not self._risk_data_updated_at or age > max_age_ms:
+                return False, f"Risk data is stale ({age} ms old)"
+            return True, ""
+
     def stats(self) -> dict:
         with self._lock:
             now = _now_ms()
@@ -246,6 +310,7 @@ class LossTracker:
                 else 0.0
             )
 
+            risk_data_age = now - self._risk_data_updated_at
             return {
                 "daily_loss_pct":          round(self._current_pct, 4),
                 "start_of_day_equity":     round(self._start_of_day_equity, 2),
@@ -260,4 +325,11 @@ class LossTracker:
                 "equity_peak":             round(self._equity_peak, 2),
                 # Guard 3
                 "rolling_window_samples":  len(self._equity_window),
+                "risk_data_updated_at":     self._risk_data_updated_at,
+                "risk_data_fresh":          bool(
+                    self._risk_data_updated_at
+                    and not self._risk_data_error
+                    and risk_data_age <= 10_000
+                ),
+                "risk_data_error":          self._risk_data_error,
             }

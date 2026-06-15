@@ -41,7 +41,7 @@ class RestartReconciler:
                 stale_count += 1
                 continue
 
-            if _pid_is_alive(reg.pid):
+            if _pid_is_alive(reg.pid) and self._supervisor.adopt(reg.agent_id, reg.pid):
                 logger.info(
                     "Reconciler: preserving agent %s (pid=%d) for adoption",
                     reg.agent_id,
@@ -59,7 +59,13 @@ class RestartReconciler:
             stale_count += 1
 
         for lease in self._registry.list_terminal_leases():
-            if lease.pid is not None and not _pid_is_alive(lease.pid):
+            owner = self._registry.get_agent(lease.agent_id)
+            identity = (
+                self._supervisor.process_identity(owner.agent_id, lease.pid)
+                if owner and lease.pid is not None
+                else False
+            )
+            if lease.pid is not None and identity is False:
                 logger.info(
                     "Reconciler: releasing stale terminal lease %s "
                     "(pid=%d was dead)",

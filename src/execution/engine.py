@@ -74,6 +74,7 @@ class ExecutionEngine:
         self._daily_loss_pct: float = 0.0  # cached — refreshed by position manager poll
         self._loss_tracker: "LossTracker | None" = loss_tracker
         self._cluster_tracker: "ClusterRiskTracker | None" = cluster_tracker
+        self._persistence_available = True
 
     def update_daily_loss(
         self, loss_pct: float, start_equity: float, current_equity: float = 0.0
@@ -89,6 +90,10 @@ class ExecutionEngine:
             self._loss_tracker.update_daily_loss_pct(loss_pct, start_equity)
             if current_equity > 0:
                 self._loss_tracker.update_equity(current_equity)
+
+    def mark_risk_data_unavailable(self, error: str) -> None:
+        if self._loss_tracker is not None:
+            self._loss_tracker.mark_risk_data_unavailable(error)
 
     def _pending_total(self) -> int:
         return sum(self._pending.values())
@@ -111,6 +116,18 @@ class ExecutionEngine:
         pipeline_start_ms = now_ms()
         signal = replace(signal, execution_started_at=pipeline_start_ms)
         _resolved = signal.resolved_symbol
+
+        health_check = getattr(self._repo, "health_check", None)
+        if not self._persistence_available or (
+            health_check is not None and not health_check()
+        ):
+            self._persistence_available = False
+            logger.error("New entry rejected because persistence is unavailable")
+            self._bus.emit(
+                Events.RISK_REJECTED,
+                {"signal": signal, "reason": "persistence_unavailable"},
+            )
+            return None
 
         logger.info(
             "ExecutionEngine processing signal",
@@ -440,6 +457,7 @@ class ExecutionEngine:
 
         persisted = self._repo.save(trade)
         if not persisted:
+            self._persistence_available = False
             logger.error(
                 "Trade opened but persistence failed",
                 extra={
@@ -454,6 +472,8 @@ class ExecutionEngine:
                 Events.TRADE_ERROR,
                 {"signal": signal, "reason": "trade_persistence_failed_after_fill"},
             )
+        else:
+            self._persistence_available = True
 
         if self._cluster_tracker is not None:
             self._cluster_tracker.mark_trade_opened(trade)

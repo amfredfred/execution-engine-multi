@@ -66,6 +66,7 @@ class AgentConfigStore:
 
         if user_overrides:
             base = _deep_merge(base, user_overrides)
+        base.setdefault("mt5", {})["magic"] = _magic_for_agent(reg.agent_id)
 
         # Scrub any secrets that crept in via overrides
         for section, key in _REDACT_PATHS:
@@ -100,6 +101,7 @@ class AgentConfigStore:
         return merged
 
     def write_config_document(self, reg: AgentRegistration, document: dict) -> None:
+        document.setdefault("mt5", {})["magic"] = _magic_for_agent(reg.agent_id)
         config_path = Path(reg.data_dir) / "config.yaml"
         with open(config_path, "w", encoding="utf-8") as fh:
             yaml.safe_dump(document, fh, default_flow_style=False, allow_unicode=True)
@@ -118,6 +120,13 @@ def _make_engine_id(hostname: str, device_id: str, agent_id: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", hostname.lower()).strip("-")[:16]
     uid6 = device_id.replace("-", "")[:6]
     return f"{slug}-{uid6}-{agent_id}"
+
+
+def _magic_for_agent(agent_id: str) -> int:
+    numeric = re.search(r"(\d+)$", agent_id)
+    if numeric:
+        return 8_850_000 + int(numeric.group(1))
+    return 8_000_000 + int.from_bytes(agent_id.encode("utf-8"), "little") % 999_999
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

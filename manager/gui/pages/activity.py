@@ -242,7 +242,8 @@ class ActivityPage(ctk.CTkFrame):
                 while True:
                     line = fh.readline()
                     if line:
-                        self.after(0, lambda l=line.rstrip(): self._append_log_line(l))
+                        stripped = line.rstrip()
+                        self.after(0, lambda value=stripped: self._append_log_line(value))
                     else:
                         time.sleep(0.5)
         except Exception:

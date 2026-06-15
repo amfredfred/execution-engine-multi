@@ -34,6 +34,7 @@ $DistDir      = Join-Path $EngineDir "apex-quant-trader-agent"   # {app}\apex-qu
 $ServiceName  = "apex-quant-trader-agent"
 $TempDir      = Join-Path $env:TEMP "apexquantel-update"
 $BackupDir    = Join-Path $EngineDir "apex-quant-trader-agent.bak"
+$StagingDir   = Join-Path $TempDir "staged"
 
 # ── Read gateway URL from config.yaml ────────────────────────────────────
 function Get-GatewayBase {
@@ -85,6 +86,25 @@ function Verify-Sha256([string]$filePath, [string]$expected) {
     return $true
 }
 
+function Verify-DetachedSignature([string]$filePath, [string]$signatureB64, [string]$thumbprint) {
+    if (-not $signatureB64 -or -not $thumbprint) {
+        throw "Update manifest must include signature and signer_thumbprint"
+    }
+    Add-Type -AssemblyName System.Security.Cryptography.Pkcs
+    $content = [System.Security.Cryptography.Pkcs.ContentInfo]::new(
+        [System.IO.File]::ReadAllBytes($filePath)
+    )
+    $cms = [System.Security.Cryptography.Pkcs.SignedCms]::new($content, $true)
+    $cms.Decode([Convert]::FromBase64String($signatureB64))
+    $cms.CheckSignature($false)
+    $actual = $cms.SignerInfos[0].Certificate.Thumbprint.Replace(" ", "").ToUpperInvariant()
+    $expected = $thumbprint.Replace(" ", "").ToUpperInvariant()
+    if ($actual -ne $expected) {
+        throw "Update signer mismatch. Expected $expected, got $actual"
+    }
+    Write-Host "  Detached signature verified: $actual" -ForegroundColor DarkGray
+}
+
 function Stop-ServiceSafe {
     $svc = Get-Service $ServiceName -ErrorAction SilentlyContinue
     if (-not $svc) { return }
@@ -107,7 +127,8 @@ function Start-ServiceSafe {
         Start-Service $ServiceName -ErrorAction SilentlyContinue
         Start-Sleep 3
         $svc = Get-Service $ServiceName -ErrorAction SilentlyContinue
-        Write-Host "  Status: $($svc?.Status ?? 'unknown')"
+        $status = if ($svc) { $svc.Status } else { "unknown" }
+        Write-Host "  Status: $status"
     }
 }
 
@@ -136,6 +157,8 @@ try {
 $RemoteVersion = $manifest.version
 $DownloadUrl   = $manifest.download_url
 $Sha256        = $manifest.sha256
+$Signature     = $manifest.signature
+$SignerThumbprint = $manifest.signer_thumbprint
 
 Write-Host "  Remote version : $RemoteVersion"
 
@@ -173,10 +196,17 @@ Write-Host "  Downloading $DownloadUrl..."
 Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath -UseBasicParsing
 
 # ── Verify checksum ───────────────────────────────────────────────────────
-if ($Sha256) {
-    if (-not (Verify-Sha256 $ZipPath $Sha256)) { exit 1 }
-} else {
-    Write-Warning "No SHA-256 checksum in manifest — skipping verification (not recommended)"
+if (-not $Sha256) { throw "Update manifest does not include mandatory SHA-256 checksum" }
+if (-not (Verify-Sha256 $ZipPath $Sha256)) { exit 1 }
+Verify-DetachedSignature $ZipPath $Signature $SignerThumbprint
+
+# Extract and validate completely before touching the active installation.
+if (Test-Path $StagingDir) { Remove-Item $StagingDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $StagingDir | Out-Null
+Expand-Archive $ZipPath -DestinationPath $StagingDir -Force
+$StagedDist = Join-Path $StagingDir "apex-quant-trader-agent"
+if (-not (Test-Path (Join-Path $StagedDist "apex-quant-trader-agent.exe"))) {
+    throw "Signed update does not contain apex-quant-trader-agent.exe"
 }
 
 # ── Stop service ──────────────────────────────────────────────────────────
@@ -194,16 +224,17 @@ if (Test-Path $DistDir) {
     Rename-Item $DistDir $BackupDir
 }
 
-# ── Extract ───────────────────────────────────────────────────────────────
-Write-Host "  Extracting..."
-Expand-Archive $ZipPath -DestinationPath $EngineDir -Force
-
-# Verify the exe appeared
-if (-not (Test-Path (Join-Path $DistDir "apex-quant-trader-agent.exe"))) {
-    Write-Error "Extraction completed but apex-quant-trader-agent.exe not found — rolling back"
+# ── Atomic activation with rollback ──────────────────────────────────────
+try {
+    Move-Item $StagedDist $DistDir
+    if (-not (Test-Path (Join-Path $DistDir "apex-quant-trader-agent.exe"))) {
+        throw "Activated update is incomplete"
+    }
+} catch {
+    if (Test-Path $DistDir) { Remove-Item $DistDir -Recurse -Force }
     if (Test-Path $BackupDir) { Rename-Item $BackupDir $DistDir }
     if ($serviceWasRunning) { Start-ServiceSafe }
-    exit 1
+    throw
 }
 
 # ── Update version.txt ────────────────────────────────────────────────────

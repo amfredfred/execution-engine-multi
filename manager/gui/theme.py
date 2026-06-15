@@ -7,7 +7,7 @@ desktop GUI and the web dashboard share the same visual language.
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Literal
+from typing import ClassVar, Literal
 
 import customtkinter as ctk
 
@@ -223,14 +223,14 @@ class Badge(ctk.CTkFrame):
     tone: good | warn | danger | info | normal
     """
 
-    _BG = {
+    _BG: ClassVar[dict[str, str]] = {
         "good":   SUCCESS_BG,
         "warn":   WARNING_BG,
         "danger": DANGER_BG,
         "info":   INFO_BG,
         "normal": SURFACE_RAISED,
     }
-    _BORDER = {
+    _BORDER: ClassVar[dict[str, str]] = {
         "good":   SUCCESS_BORDER,
         "warn":   WARNING_BORDER,
         "danger": DANGER_BORDER,

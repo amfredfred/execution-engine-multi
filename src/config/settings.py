@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -162,6 +163,18 @@ def _validate_pct_inclusive(name: str, value: float) -> None:
         raise ValueError(f"{name} must be between 0 and 100.")
 
 
+def _strict_bool(name: str, value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be true or false.")
+    return value
+
+
+def _positive_finite(name: str, value: float, *, allow_zero: bool = False) -> None:
+    if not math.isfinite(value) or (value < 0 if allow_zero else value <= 0):
+        qualifier = ">= 0" if allow_zero else "> 0"
+        raise ValueError(f"{name} must be finite and {qualifier}.")
+
+
 def _parse_tf_overrides(raw: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
     """Parse per-symbol, per-timeframe TP1 overrides.
 
@@ -308,7 +321,9 @@ def _parse_equity_throttle(raw: Any) -> "EquityThrottleConfig":
         raise ValueError("risk.equity_throttle must be a mapping.")
     defaults = EquityThrottleConfig()
     return EquityThrottleConfig(
-        enabled=bool(raw.get("enabled", defaults.enabled)),
+        enabled=_strict_bool(
+            "risk.equity_throttle.enabled", raw.get("enabled", defaults.enabled)
+        ),
         drawdown_threshold_r=float(
             raw.get("drawdown_threshold_r", defaults.drawdown_threshold_r)
         ),
@@ -357,7 +372,7 @@ def _parse_cluster_risk(raw: Any) -> "ClusterRiskConfig":
         groups.append(group)
 
     return ClusterRiskConfig(
-        enabled=bool(raw.get("enabled", False)),
+        enabled=_strict_bool("risk.cluster_risk.enabled", raw.get("enabled", False)),
         groups=tuple(groups),
     )
 
@@ -384,6 +399,24 @@ class RiskConfig:
             raise ValueError(
                 f"risk.max_losing_streak must be >= 1, got: {self.max_losing_streak}"
             )
+        if self.max_exposure_per_symbol < 1:
+            raise ValueError("risk.max_exposure_per_symbol must be >= 1.")
+        for name, value, allow_zero in (
+            ("risk.max_daily_loss_percent", self.max_daily_loss_percent, False),
+            ("risk.min_rr_ratio", self.min_rr_ratio, False),
+            ("risk.max_lot_size", self.max_lot_size, False),
+            ("risk.min_lot_size", self.min_lot_size, False),
+            ("risk.sl_ratio_threshold", self.sl_ratio_threshold, False),
+            ("risk.max_profit_drawdown_percent", self.max_profit_drawdown_percent, True),
+            ("risk.rolling_drawdown_pct", self.rolling_drawdown_pct, True),
+        ):
+            _positive_finite(name, value, allow_zero=allow_zero)
+        if self.min_lot_size > self.max_lot_size:
+            raise ValueError("risk.min_lot_size cannot exceed max_lot_size.")
+        if self.rolling_window_size < 0:
+            raise ValueError("risk.rolling_window_size must be >= 0.")
+        for symbol, threshold in self.symbol_sl_ratio_threshold.items():
+            _positive_finite(f"risk.symbol_sl_ratio_threshold.{symbol}", threshold)
 
 
 @dataclass(frozen=True)
@@ -419,6 +452,17 @@ class ExecutionConfig:
             "execution.breakeven_max_buffer_pct_of_risk",
             self.breakeven_max_buffer_pct_of_risk,
         )
+        if self.slippage < 0 or self.magic <= 0 or self.order_retry_count < 0:
+            raise ValueError("execution slippage/retries must be non-negative and magic positive.")
+        if self.max_signal_age_ms <= 0:
+            raise ValueError("execution.max_signal_age_ms must be > 0.")
+        for name, value, allow_zero in (
+            ("execution.spread_risk_multiplier", self.spread_risk_multiplier, True),
+            ("execution.max_entry_slippage_pct_of_stop", self.max_entry_slippage_pct_of_stop, True),
+            ("execution.order_retry_delay_sec", self.order_retry_delay_sec, True),
+            ("execution.breakeven_spread_multiplier", self.breakeven_spread_multiplier, True),
+        ):
+            _positive_finite(name, value, allow_zero=allow_zero)
         for sym, tf_map in self.tf_overrides.items():
             for tf_key, override in tf_map.items():
                 if "tp1_trigger_pct" in override:
@@ -488,6 +532,11 @@ class Mt5Config:
     password: str
     server: str
     path: str
+    symbol_mappings: Dict[str, str] = field(default_factory=dict)
+    broker_timezone: str = "UTC"
+
+    def __post_init__(self) -> None:
+        ZoneInfo(self.broker_timezone)
 
 
 @dataclass(frozen=True)
@@ -503,7 +552,7 @@ class GatewayConfig:
     def __post_init__(self) -> None:
         if len(self.engine_id) < 8:
             raise ValueError("gateway.engine_id must be at least 8 characters.")
-        if len(self.activation_key) < 16:
+        if self.activation_key and len(self.activation_key) < 16:
             raise ValueError("APEX_ACTIVATION_KEY must be at least 16 characters.")
         if self.room_ttl_seconds < 30 or self.room_ttl_seconds > 86400:
             raise ValueError("gateway.room_ttl_seconds must be between 30 and 86400.")
@@ -522,6 +571,11 @@ class AppConfig:
     position_poll_interval: float
     engine_timezone: ZoneInfo
     monitoring_port: int
+
+    def __post_init__(self) -> None:
+        _positive_finite("engine.position_poll_interval", self.position_poll_interval)
+        if not 1 <= self.monitoring_port <= 65535:
+            raise ValueError("engine.monitoring_port must be between 1 and 65535.")
 
     @classmethod
     def from_yaml(cls, path: Path | str = "config.yaml") -> "AppConfig":
@@ -570,6 +624,11 @@ class AppConfig:
                 password=mt5_password,
                 server=str(mt5["server"]),
                 path=str(mt5.get("path", "")),
+                symbol_mappings={
+                    normalise_symbol(str(base)): str(broker)
+                    for base, broker in mt5.get("symbol_mappings", {}).items()
+                },
+                broker_timezone=str(mt5.get("broker_timezone", "UTC")),
             ),
             risk=RiskConfig(
                 max_losing_streak=int(risk["max_losing_streak"]),
@@ -585,7 +644,7 @@ class AppConfig:
                         "symbol_sl_ratio_threshold", {}
                     ).items()
                 },
-                no_hedging=bool(risk.get("no_hedging", True)),
+                no_hedging=_strict_bool("risk.no_hedging", risk.get("no_hedging", True)),
                 max_profit_drawdown_percent=float(risk.get("max_profit_drawdown_percent", 2.0)),
                 rolling_window_size=int(risk.get("rolling_window_size", 0)),
                 rolling_drawdown_pct=float(risk.get("rolling_drawdown_pct", 0.0)),
@@ -595,14 +654,20 @@ class AppConfig:
             execution=ExecutionConfig(
                 tp1_trigger_pct=float(exe["tp1_trigger_pct"]),
                 tp1_percentage=float(exe["tp1_percentage"]),
-                move_sl_to_be_on_tp1=bool(exe.get("move_sl_to_be_on_tp1", True)),
+                move_sl_to_be_on_tp1=_strict_bool(
+                    "execution.move_sl_to_be_on_tp1",
+                    exe.get("move_sl_to_be_on_tp1", True),
+                ),
                 slippage=int(mt5.get("slippage", 10)),
                 magic=int(mt5.get("magic", 20240101)),
                 comment=str(mt5.get("comment", "signal-engine")),
                 spread_risk_multiplier=float(exe.get("spread_risk_multiplier", 1.0)),
                 order_retry_count=int(exe.get("order_retry_count", 2)),
                 max_entry_slippage_pct_of_stop=float(exe.get("max_entry_slippage_pct_of_stop", 0.20)),
-                close_on_slippage_exceed=bool(exe.get("close_on_slippage_exceed", False)),
+                close_on_slippage_exceed=_strict_bool(
+                    "execution.close_on_slippage_exceed",
+                    exe.get("close_on_slippage_exceed", False),
+                ),
                 order_retry_delay_sec=float(exe.get("order_retry_delay_sec", 0.5)),
                 breakeven_spread_multiplier=float(
                     exe.get("breakeven_spread_multiplier", 1.5)
@@ -610,7 +675,10 @@ class AppConfig:
                 breakeven_max_buffer_pct_of_risk=float(
                     exe.get("breakeven_max_buffer_pct_of_risk", 10.0)
                 ),
-                adjust_levels_on_slippage=bool(exe.get("adjust_levels_on_slippage", False)),
+                adjust_levels_on_slippage=_strict_bool(
+                    "execution.adjust_levels_on_slippage",
+                    exe.get("adjust_levels_on_slippage", False),
+                ),
                 max_signal_age_ms=int(exe.get("max_signal_age_ms", 90_000)),
                 tf_overrides=_parse_tf_overrides(exe.get("tf_overrides")),
             ),

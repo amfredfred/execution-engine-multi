@@ -69,6 +69,7 @@ class WebSocketClient:
         self._stopped  = threading.Event()
         self._thread:  threading.Thread | None = None
         self._current_delay = reconnect_delay
+        self._connected = threading.Event()
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -92,6 +93,9 @@ class WebSocketClient:
             except Exception:
                 logger.warning("WebSocketClient.send failed")
         return False
+
+    def is_connected(self) -> bool:
+        return self._connected.is_set()
 
     # ── Internal loop ─────────────────────────────────────────────────────
 
@@ -130,6 +134,7 @@ class WebSocketClient:
 
     def _handle_open(self, ws: websocket.WebSocketApp) -> None:
         logger.info("WebSocketClient connected: %s", self._url)
+        self._connected.set()
         self._current_delay = self._reconnect_delay   # reset backoff
         self._on_connected()
 
@@ -151,8 +156,8 @@ class WebSocketClient:
         logger.warning(
             "WebSocketClient closed: code=%s msg=%s", close_status_code, close_msg
         )
+        self._connected.clear()
         self._on_disconnected()
-
 
 
 

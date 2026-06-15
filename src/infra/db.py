@@ -146,11 +146,13 @@ class Database:
                     entry_price     REAL,
                     entry_lots      REAL,
                     current_lots    REAL,
+                    tp1_lots        REAL DEFAULT 0,
                     stop_loss       REAL,
                     tp1             REAL,
                     tp2             REAL,
                     tp1_hit         INTEGER DEFAULT 0,
                     tp1_hit_at      INTEGER,
+                    tp1_close_price REAL,
                     tp2_hit         INTEGER DEFAULT 0,
                     tp2_hit_at      INTEGER,
                     sl_hit          INTEGER DEFAULT 0,
@@ -233,7 +235,18 @@ class Database:
                 );
             """
             )
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()
+            }
+            if "tp1_lots" not in columns:
+                conn.execute("ALTER TABLE trades ADD COLUMN tp1_lots REAL DEFAULT 0")
+            if "tp1_close_price" not in columns:
+                conn.execute("ALTER TABLE trades ADD COLUMN tp1_close_price REAL")
         logger.info("Database initialised", extra={"path": self._path})
+
+    def health_check(self) -> bool:
+        with self._connect() as conn:
+            return int(conn.execute("SELECT 1").fetchone()[0]) == 1
 
     # ── Trades ────────────────────────────────────────────────────────────
 
@@ -254,6 +267,7 @@ class Database:
                         "riskPercent": trade.plan.risk_percent,
                         "riskRewardRatio": trade.plan.risk_reward_ratio,
                         "riskMultiplier": getattr(trade.plan, "risk_multiplier", 1.0),
+                        "tp1Lots": getattr(trade.plan, "tp1_lots", 0.0),
                         # Originals — the trades.stop_loss column is mutated to
                         # breakeven after TP1, so R rebuilds need these.
                         "entryPrice": trade.plan.entry_price,
@@ -268,17 +282,17 @@ class Database:
                 """
                 INSERT INTO trades (
                     id, signal_id, symbol, side, status,
-                    entry_ticket, entry_price, entry_lots, current_lots,
+                    entry_ticket, entry_price, entry_lots, current_lots, tp1_lots,
                     stop_loss, tp1, tp2,
-                    tp1_hit, tp1_hit_at, tp2_hit, tp2_hit_at,
+                    tp1_hit, tp1_hit_at, tp1_close_price, tp2_hit, tp2_hit_at,
                     sl_hit, sl_hit_at,
                     close_reason, close_price, realized_pnl, realized_rr,
                     plan_json, opened_at, closed_at, created_at, updated_at
                 ) VALUES (
                     :id, :signal_id, :symbol, :side, :status,
-                    :entry_ticket, :entry_price, :entry_lots, :current_lots,
+                    :entry_ticket, :entry_price, :entry_lots, :current_lots, :tp1_lots,
                     :stop_loss, :tp1, :tp2,
-                    :tp1_hit, :tp1_hit_at, :tp2_hit, :tp2_hit_at,
+                    :tp1_hit, :tp1_hit_at, :tp1_close_price, :tp2_hit, :tp2_hit_at,
                     :sl_hit, :sl_hit_at,
                     :close_reason, :close_price, :realized_pnl, :realized_rr,
                     :plan_json, :opened_at, :closed_at, :created_at, :updated_at
@@ -286,9 +300,11 @@ class Database:
                 ON CONFLICT(id) DO UPDATE SET
                     status       = excluded.status,
                     current_lots = excluded.current_lots,
+                    tp1_lots    = excluded.tp1_lots,
                     stop_loss    = excluded.stop_loss,
                     tp1_hit      = excluded.tp1_hit,
                     tp1_hit_at   = excluded.tp1_hit_at,
+                    tp1_close_price = excluded.tp1_close_price,
                     tp2_hit      = excluded.tp2_hit,
                     tp2_hit_at   = excluded.tp2_hit_at,
                     sl_hit       = excluded.sl_hit,
@@ -310,11 +326,13 @@ class Database:
                     "entry_price": trade.entry_price,
                     "entry_lots": trade.entry_lots,
                     "current_lots": trade.current_lots,
+                    "tp1_lots": trade.tp1_lots,
                     "stop_loss": trade.stop_loss,
                     "tp1": trade.tp1,
                     "tp2": trade.tp2,
                     "tp1_hit": int(trade.tp1_hit or False),
                     "tp1_hit_at": trade.tp1_hit_at,
+                    "tp1_close_price": trade.tp1_close_price,
                     "tp2_hit": int(trade.tp2_hit or False),
                     "tp2_hit_at": trade.tp2_hit_at,
                     "sl_hit": int(trade.sl_hit or False),

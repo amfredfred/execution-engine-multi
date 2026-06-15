@@ -47,6 +47,10 @@ def bootstrap(
     container.db.init()
     container.trade_repo.init()
     metrics.init_db(container.db)
+    container.loss_tracker.hydrate_state(container.db.load_device_state("risk_state"))
+    container.loss_tracker.set_state_sink(
+        lambda state: container.db.save_device_state("risk_state", state)
+    )
 
     # ── UIBridge (GUI-only mode — workers use IPC, not UIBridge) ─────────────
     if expose_local_ui:
@@ -72,6 +76,7 @@ def bootstrap(
 
 def shutdown(container: AppContainer) -> None:
     logger.info("Shutting down Execution Engine")
+    container.runtime_ready.clear()
     container.event_bus.emit(Events.SYSTEM_STOPPING)
     container.signal_consumer.stop()
     container.signal_queue.stop()
@@ -106,6 +111,7 @@ def _connect_mt5_with_retry(
             # _attempt_mt5_connect only returns normally on success
             return
         except Exception as exc:
+            container.runtime_error = str(exc)
             delay = _MT5_RETRY_DELAYS[min(attempt - 1, len(_MT5_RETRY_DELAYS) - 1)]
             logger.warning(
                 "MT5 connection failed (attempt %d) — retrying in %ds: %s",
@@ -175,9 +181,9 @@ def _attempt_mt5_connect(
             },
         )
     except Exception as exc:
-        logger.warning("Daily loss priming failed — using safe defaults: %s", exc)
-        acct = container.mt5_positions.get_account_info()
-        container.execution_engine.update_daily_loss(0.0, acct.equity, acct.equity)
+        raise ConnectionError(
+            f"Risk data unavailable; refusing to start trading: {exc}"
+        ) from exc
 
     # Wire event handlers (idempotent — safe to call once)
     _wire_events(container)
@@ -190,6 +196,8 @@ def _attempt_mt5_connect(
         container.signal_consumer.start()
 
     container.event_bus.emit(Events.SYSTEM_STARTED)
+    container.runtime_error = None
+    container.runtime_ready.set()
     logger.info(
         "Execution Engine fully online",
         extra={

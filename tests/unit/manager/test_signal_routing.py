@@ -1,9 +1,13 @@
 ﻿from unittest.mock import MagicMock
 
+import json
+import time
+
 from src.domain.signal_interface import InboundSignal
 from src.core.event_bus import EventBus
 from src.core.event_types import Events
 from manager.app.models import AgentRegistration, AgentStatus
+from manager.app.registry import AgentRegistry
 from manager.app.signal_router import ManagerSignalRouter
 from src.runtime.contracts import EngineCommand, EngineCommandType
 from src.worker.event_client import WorkerEventClient
@@ -40,8 +44,8 @@ def _signal_payload(broker: str = "fbs") -> dict:
             "pattern": "HAMMER",
             "wickTip": 3338.0,
         },
-        "createdAt": 4,
-        "triggeredAt": 4,
+        "createdAt": int(time.time() * 1000),
+        "triggeredAt": int(time.time() * 1000),
     }
 
 
@@ -87,13 +91,23 @@ def test_manager_routes_only_to_running_matching_broker_and_symbol() -> None:
         _agent("fbs-wrong-symbol", "FBS-Real", symbols=["EURUSD"]),
     ]
     event_hub = MagicMock()
-    event_hub.deliver_signal.return_value = True
-    router = ManagerSignalRouter(registry, event_hub, "key", "wss://gateway", "1.0")
+    queued = []
+    registry.queue_signal_delivery.side_effect = (
+        lambda signal_id, agent_id, payload, expires_at: queued.append({
+            "signal_id": signal_id, "agent_id": agent_id,
+            "payload_json": json.dumps(payload), "command_id": None,
+            "attempts": 0, "expires_at": expires_at,
+        })
+    )
+    registry.list_due_signal_deliveries.side_effect = lambda _now: list(queued)
+    event_hub.submit_command.return_value = "command-1"
+    router = ManagerSignalRouter(registry, event_hub, "wss://gateway", "key")
 
     router._on_signal(InboundSignal.from_dict(_signal_payload("fbs")))
 
-    event_hub.deliver_signal.assert_called_once()
-    agent_id, forwarded = event_hub.deliver_signal.call_args.args
+    event_hub.submit_command.assert_called_once()
+    agent_id, _, payload = event_hub.submit_command.call_args.args
+    forwarded = payload["signal"]
     assert agent_id == "fbs-running"
     assert forwarded["broker"] == "fbs"
     assert forwarded["entryPrice"] == 3342.5
@@ -119,6 +133,30 @@ def test_worker_accepts_signal_command_for_execution(tmp_path) -> None:
     assert received[0].broker == "fbs"
 
 
+def test_worker_persistently_deduplicates_signal_delivery(tmp_path) -> None:
+    container = MagicMock()
+    container.event_bus = EventBus()
+    received = []
+    container.event_bus.on(Events.SIGNAL_TRIGGERED, received.append)
+    command = EngineCommand(
+        engine_id="agent-0",
+        command_type=EngineCommandType.SIGNAL_DELIVER,
+        payload={"signal": InboundSignal.from_dict(_signal_payload()).to_dict()},
+    )
+    first = WorkerEventClient(
+        "agent-0", "127.0.0.1", 8871, "token", container,
+        123, "FBS-Real", str(tmp_path),
+    )
+    first._handle_command(command)
+    restarted = WorkerEventClient(
+        "agent-0", "127.0.0.1", 8871, "token", container,
+        123, "FBS-Real", str(tmp_path),
+    )
+    restarted._handle_command(command)
+
+    assert [signal.id for signal in received] == ["signal-route-001"]
+
+
 def test_manager_to_matching_agent_execution_event_pipeline(tmp_path) -> None:
     container = MagicMock()
     container.event_bus = EventBus()
@@ -134,90 +172,103 @@ def test_manager_to_matching_agent_execution_event_pipeline(tmp_path) -> None:
         _agent("exness-agent", "Exness-MT5Real"),
     ]
     event_hub = MagicMock()
+    queued = []
+    registry.queue_signal_delivery.side_effect = (
+        lambda signal_id, agent_id, payload, expires_at: queued.append({
+            "signal_id": signal_id, "agent_id": agent_id,
+            "payload_json": json.dumps(payload), "command_id": None,
+            "attempts": 0, "expires_at": expires_at,
+        })
+    )
+    registry.list_due_signal_deliveries.side_effect = lambda _now: list(queued)
 
-    def _deliver(agent_id: str, payload: dict) -> bool:
+    def _deliver(agent_id: str, _command_type, payload: dict) -> str:
         assert agent_id == "fbs-agent"
         worker._handle_command(EngineCommand(
             engine_id=agent_id,
             command_type=EngineCommandType.SIGNAL_DELIVER,
-            payload={"signal": payload},
+            payload=payload,
         ))
-        return True
+        return "command-1"
 
-    event_hub.deliver_signal.side_effect = _deliver
-    router = ManagerSignalRouter(registry, event_hub, "key", "wss://gateway", "1.0")
+    event_hub.submit_command.side_effect = _deliver
+    router = ManagerSignalRouter(registry, event_hub, "wss://gateway", "key")
 
     router._on_signal(InboundSignal.from_dict(_signal_payload("fbs")))
 
     assert [signal.id for signal in execution_events] == ["signal-route-001"]
 
 
-def test_manager_publishes_agent_snapshot_as_virtual_execution_source() -> None:
-    registry = MagicMock()
-    registry.get_agent.return_value = _agent("fbs-agent", "FBS-Real")
-    router = ManagerSignalRouter(registry, MagicMock(), "key", "wss://gateway", "1.0")
-    router._consumer = MagicMock()
-    snapshot = MagicMock(
-        mt5_login=123,
-        mt5_server="FBS-Real",
-        mt5_connected=True,
-        status=AgentStatus.RUNNING,
-        balance=1000.0,
-        equity=999.0,
-        open_trades=1,
-        uptime_sec=60,
-        observed_at=1234,
+def test_manager_refreshes_signal_manager_subscription_when_symbols_change() -> None:
+    router = ManagerSignalRouter(MagicMock(), MagicMock(), "wss://signal-manager", "key")
+    router._current_symbols = {"XAUUSD"}
+    router._client = MagicMock()
+
+    router.refresh_rooms([_agent("fbs-agent", "FBS-Real", symbols=["XAUUSD", "EURUSD"])])
+
+    router._client.update_symbols.assert_called_once()
+    assert set(router._client.update_symbols.call_args.args[0]) == {"XAUUSD", "EURUSD"}
+
+
+def test_manager_does_not_resubscribe_when_symbols_are_unchanged() -> None:
+    router = ManagerSignalRouter(MagicMock(), MagicMock(), "wss://signal-manager", "key")
+    router._current_symbols = {"XAUUSD"}
+    router._client = MagicMock()
+
+    router.refresh_rooms([_agent("fbs-agent", "FBS-Real", symbols=["XAUUSD"])])
+
+    router._client.update_symbols.assert_not_called()
+
+
+def test_durable_signal_delivery_retries_and_records_acceptance(tmp_path) -> None:
+    registry = AgentRegistry(str(tmp_path / "manager"))
+    registry.init()
+    event_hub = MagicMock()
+    event_hub.submit_command.return_value = "command-1"
+    router = ManagerSignalRouter(registry, event_hub, "", "")
+    payload = _signal_payload()
+    now = int(time.time() * 1000)
+
+    registry.queue_signal_delivery("signal-1", "agent-1", payload, now + 60_000)
+    registry.queue_signal_delivery("signal-1", "agent-1", payload, now + 60_000)
+    router._process_due_deliveries()
+
+    delivery = registry.get_signal_delivery("signal-1", "agent-1")
+    assert delivery["status"] == "sent"
+    assert delivery["attempts"] == 1
+    registry.record_command("command-1", "agent-1", "signal.deliver", "sent")
+    registry.complete_command("command-1", "completed")
+    registry.update_signal_delivery(
+        "signal-1", "agent-1", status="sent", next_attempt_at=0
     )
+    router._process_due_deliveries()
 
-    router.publish_agent_snapshot("fbs-agent", snapshot)
-
-    event, payload = router._consumer._send.call_args.args
-    assert event == "manager.agent.snapshot"
-    assert payload["engine_id"] == "execution-123"
-    assert payload["account"]["server"] == "FBS-Real"
-    assert payload["metrics"]["metrics"]["open_trades"] == 1
+    assert registry.get_signal_delivery("signal-1", "agent-1")["status"] == "accepted"
+    reopened = AgentRegistry(str(tmp_path / "manager"))
+    reopened.init()
+    assert reopened.get_signal_delivery("signal-1", "agent-1")["status"] == "accepted"
 
 
-def test_manager_publishes_full_child_telemetry_snapshot() -> None:
-    registry = MagicMock()
-    registry.get_agent.return_value = _agent("fbs-agent", "FBS-Real")
-    router = ManagerSignalRouter(registry, MagicMock(), "key", "wss://gateway", "1.0")
-    router._consumer = MagicMock()
-    telemetry = {
-        "connected": True,
-        "engine": {"status": "RUNNING"},
-        "metrics": {"balance": 1000.0, "daily_pnl": 25.0},
-        "trades": [{"symbol": "XAUUSD"}],
-        "riskGuards": [{"id": "guard1"}],
-        "signals": [{"id": "signal-1"}],
-    }
-    snapshot = MagicMock(
-        mt5_login=123,
-        mt5_server="FBS-Real",
-        mt5_connected=True,
-        status=AgentStatus.RUNNING,
-        telemetry=telemetry,
-    )
+def test_stale_queued_signal_expires_without_delivery(tmp_path) -> None:
+    registry = AgentRegistry(str(tmp_path / "manager"))
+    registry.init()
+    event_hub = MagicMock()
+    router = ManagerSignalRouter(registry, event_hub, "", "")
+    registry.queue_signal_delivery("signal-1", "agent-1", {}, 1)
 
-    router.publish_agent_snapshot("fbs-agent", snapshot)
+    router._process_due_deliveries()
 
-    _, payload = router._consumer._send.call_args.args
-    assert payload["metrics"] == telemetry
+    assert registry.get_signal_delivery("signal-1", "agent-1")["status"] == "expired"
+    event_hub.submit_command.assert_not_called()
 
 
-def test_manager_attributes_child_execution_event_to_virtual_source() -> None:
-    registry = MagicMock()
-    registry.get_agent.return_value = _agent("fbs-agent", "FBS-Real")
-    router = ManagerSignalRouter(registry, MagicMock(), "key", "wss://gateway", "1.0")
-    router._consumer = MagicMock()
+def test_manager_forwards_worker_execution_events_upstream() -> None:
+    router = ManagerSignalRouter(MagicMock(), MagicMock(), "", "")
+    router._client = MagicMock()
+    router._client.send_execution_event.return_value = True
 
-    router.publish_agent_event("fbs-agent", "trade.opened", {"symbol": "XAUUSD"})
+    router.forward_execution_event("agent-1", "trade.opened", {"trade_id": "trade-1"})
 
-    router._consumer._send.assert_called_once_with(
-        "execution.event",
-        {
-            "engine_id": "execution-123",
-            "event_type": "trade.opened",
-            "data": {"symbol": "XAUUSD"},
-        },
+    router._client.send_execution_event.assert_called_once_with(
+        "agent-1", "trade.opened", {"trade_id": "trade-1"}
     )

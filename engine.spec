@@ -175,9 +175,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 # EXE
 #   console=False  — no terminal window; NSSM captures stdout/stderr via its
 #                    own pipe redirect even for Windows-subsystem (GUI) exes.
-#   uac_admin=True — embeds requireAdministrator manifest so Windows always
-#                    elevates via UAC; needed so sc.exe start/stop work from
-#                    the GUI control panel without extra prompts.
+#   uac_admin=False — manager, GUI, and workers run as the configured
+#                     unprivileged runtime identity.
 # ---------------------------------------------------------------------------
 _icon = None
 if sys.platform == "win32":
@@ -195,8 +194,8 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,          # UPX can corrupt MT5 DLL loading — leave disabled
-    console=False,      # no terminal window for GUI mode
-    uac_admin=True,     # requireAdministrator — needed for sc.exe service control
+    console=False,      # no terminal window; manager/worker log to files
+    uac_admin=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

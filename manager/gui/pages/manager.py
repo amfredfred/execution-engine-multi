@@ -87,7 +87,7 @@ class ManagerPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=SUCCESS_BG, hover_color=SUCCESS_BORDER,
             border_width=1, border_color=SUCCESS_BORDER, text_color=GREEN,
-            command=self.app.restart_manager,
+            command=self._start,
         )
         self._btn_start.grid(row=0, column=0, padx=8, pady=4)
 
@@ -224,8 +224,8 @@ class ManagerPage(ctk.CTkFrame):
         info_row(tech_inner, "Task folder",    "\\Apex Quantel\\")
         info_row(tech_inner, "REST API",       "http://localhost:8870")
         info_row(tech_inner, "Worker event IPC", "tcp://127.0.0.1:8871")
-        info_row(tech_inner, "Data directory", "C:\\ProgramData\\Apex Quantel\\Multi\\")
-        info_row(tech_inner, "Log file",       "C:\\ProgramData\\Apex Quantel\\Multi\\manager\\logs\\manager.log")
+        info_row(tech_inner, "Data directory", "C:\\ProgramData\\Apex Quantel\\manager\\")
+        info_row(tech_inner, "Log file",       "C:\\ProgramData\\Apex Quantel\\manager\\logs\\manager.log")
 
     def on_navigate_to(self) -> None:
         self._load_license()

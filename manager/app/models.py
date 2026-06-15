@@ -13,6 +13,7 @@ class AgentStatus(str, Enum):
     PROVISIONED = "PROVISIONED"
     STARTING    = "STARTING"
     RUNNING     = "RUNNING"
+    DEGRADED    = "DEGRADED"
     STOPPING    = "STOPPING"
     STOPPED     = "STOPPED"
     CRASH_LOOP  = "CRASH_LOOP"

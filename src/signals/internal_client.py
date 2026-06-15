@@ -64,6 +64,20 @@ class InternalSignalClient:
         if self._ws:
             self._ws.send(json.dumps({"action": "subscribe", "symbols": symbols}))
 
+    def send_execution_event(self, engine_id: str, event_type: str, data: dict) -> bool:
+        if not self._ws:
+            return False
+        self._ws.send(json.dumps({
+            "action": "execution.event",
+            "engine_id": engine_id,
+            "event_type": event_type,
+            "data": data,
+        }))
+        return True
+
+    def is_connected(self) -> bool:
+        return bool(self._ws and self._ws.is_connected())
+
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _on_connected(self) -> None:

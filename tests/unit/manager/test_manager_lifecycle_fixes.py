@@ -1,11 +1,13 @@
 ﻿from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from manager.app.event_hub import EngineEventHub
 from manager.app.models import AgentRegistration, AgentStatus
 from manager.app.operations import OperationRunner
+from manager.app.process_supervisor import ProcessSupervisor
 from manager.app.reconciliation import RestartReconciler, _pid_is_alive
 from manager.app.registry import AgentRegistry
+from manager.app.service import ManagerRuntime
 from src.runtime.contracts import EngineEvent, EngineEventType
 
 
@@ -40,9 +42,31 @@ def test_delete_agent_removes_registration(tmp_path: Path) -> None:
     assert registry.list_agents() == []
 
 
+def test_agent_identity_and_port_allocations_are_unique(tmp_path: Path) -> None:
+    registry = AgentRegistry(str(tmp_path / "manager"))
+    registry.init()
+
+    first = registry.allocate_agent_identity()
+    second = registry.allocate_agent_identity()
+
+    assert first == ("agent-0", 8081)
+    assert second == ("agent-1", 8082)
+
+
+def test_crash_count_uses_rolling_window(tmp_path: Path) -> None:
+    registry = AgentRegistry(str(tmp_path / "manager"))
+    registry.init()
+    registry.upsert_agent(_agent(tmp_path))
+
+    with patch("manager.app.registry._now_ms", side_effect=[1, 400_001]):
+        assert registry.increment_crash_count("agent-0", window_ms=300_000) == 1
+        assert registry.increment_crash_count("agent-0", window_ms=300_000) == 1
+
+
 def test_remove_operation_forgets_runtime_state_and_deprovisions() -> None:
     registry = MagicMock()
     supervisor = MagicMock()
+    supervisor.is_alive.return_value = False
     provisioner = MagicMock()
     event_hub = MagicMock()
     runner = OperationRunner(
@@ -51,13 +75,45 @@ def test_remove_operation_forgets_runtime_state_and_deprovisions() -> None:
 
     runner._execute("remove", "agent-0", {})
 
-    supervisor.terminate.assert_called_once_with("agent-0", force=True)
+    supervisor.stop_with_escalation.assert_called_once()
     event_hub.forget_engine.assert_called_once_with("agent-0")
     provisioner.deprovision.assert_called_once_with("agent-0")
 
 
+def test_stop_operation_requests_graceful_worker_shutdown() -> None:
+    registry = MagicMock()
+    supervisor = MagicMock()
+    event_hub = MagicMock()
+    event_hub.submit_command.return_value = "command-1"
+    runner = OperationRunner(
+        registry, supervisor, MagicMock(), MagicMock(), event_hub,
+    )
+
+    runner._execute("stop", "agent-0", {})
+
+    event_hub.submit_command.assert_called_once()
+    supervisor.stop_with_escalation.assert_called_once_with(
+        "agent-0", graceful_requested=True
+    )
+
+
+def test_stop_escalates_from_graceful_to_terminate_to_force() -> None:
+    supervisor = ProcessSupervisor.__new__(ProcessSupervisor)
+    supervisor.is_alive = MagicMock(return_value=True)
+    supervisor.terminate = MagicMock()
+
+    supervisor.stop_with_escalation(
+        "agent-0", graceful_requested=True, graceful_timeout=0, terminate_timeout=0
+    )
+
+    assert supervisor.terminate.call_args_list == [
+        call("agent-0", force=False),
+        call("agent-0", force=True),
+    ]
+
+
 def test_windows_access_denied_pid_probe_is_treated_as_alive() -> None:
-    with patch("src.manager.reconciliation.os.kill", side_effect=PermissionError):
+    with patch("manager.app.reconciliation.os.kill", side_effect=PermissionError):
         assert _pid_is_alive(1234) is True
 
 
@@ -84,10 +140,78 @@ def test_restart_reconciler_preserves_live_worker_for_adoption(tmp_path: Path) -
     registry.list_terminal_leases.return_value = []
     supervisor = MagicMock()
 
-    with patch("src.manager.reconciliation._pid_is_alive", return_value=True):
+    with patch("manager.app.reconciliation._pid_is_alive", return_value=True):
         RestartReconciler(registry, supervisor).run()
 
     supervisor.kill_orphan.assert_not_called()
     registry.set_agent_status.assert_called_once_with(
         "agent-0", AgentStatus.STARTING, pid=1234,
     )
+
+
+def test_manager_start_rolls_back_started_components() -> None:
+    runtime = ManagerRuntime.__new__(ManagerRuntime)
+    runtime.reconciler = MagicMock()
+    runtime.registry = MagicMock()
+    runtime.event_hub = MagicMock()
+    runtime.event_hub.get_all_snapshots.return_value = {}
+    runtime.signal_router = MagicMock()
+    runtime.api = MagicMock()
+    runtime.desired = MagicMock()
+    runtime.api.start.side_effect = RuntimeError("bind failed")
+
+    with __import__("pytest").raises(RuntimeError, match="bind failed"):
+        runtime.start()
+
+    runtime.signal_router.stop.assert_called_once()
+    runtime.event_hub.stop.assert_called_once()
+    runtime.registry.enforce_retention.assert_called_once()
+
+
+def test_manager_stops_workers_before_ipc_hub() -> None:
+    runtime = ManagerRuntime.__new__(ManagerRuntime)
+    calls = []
+    runtime.desired = MagicMock()
+    runtime.signal_router = MagicMock()
+    runtime.api = MagicMock()
+    runtime.event_hub = MagicMock()
+    runtime.event_hub.get_all_snapshots.return_value = {}
+    runtime._stop_all_workers = lambda: calls.append("workers")
+    runtime.event_hub.stop.side_effect = lambda: calls.append("hub")
+
+    runtime.stop()
+
+    assert calls == ["workers", "hub"]
+
+
+def test_manager_refuses_shutdown_with_open_positions_unless_forced() -> None:
+    runtime = ManagerRuntime.__new__(ManagerRuntime)
+    runtime.event_hub = MagicMock()
+    runtime.event_hub.get_all_snapshots.return_value = {
+        "agent-1": MagicMock(open_trades=1)
+    }
+
+    with __import__("pytest").raises(RuntimeError, match="Unsafe shutdown refused"):
+        runtime.stop()
+
+
+def test_manager_health_includes_registry_ipc_signal_manager_and_workers() -> None:
+    runtime = ManagerRuntime.__new__(ManagerRuntime)
+    runtime.registry = MagicMock()
+    runtime.registry.health_check.return_value = True
+    runtime.event_hub = MagicMock()
+    runtime.event_hub._server = MagicMock()
+    runtime.event_hub.health_report.return_value = {
+        "ok": True, "unhealthy_workers": []
+    }
+    runtime.signal_router = MagicMock()
+    runtime.signal_router.health_report.return_value = {
+        "ok": True, "configured": True, "connected": True
+    }
+
+    report = runtime.health_report()
+
+    assert report["ok"] is True
+    assert report["registry"]["ok"] is True
+    assert report["ipc"]["ok"] is True
+    assert report["signal_manager"]["connected"] is True

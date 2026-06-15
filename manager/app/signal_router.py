@@ -15,11 +15,15 @@ from __future__ import annotations
 
 import logging
 import re
+import json
+import threading
+import time
 from typing import TYPE_CHECKING
 
 from src.core.event_bus import EventBus
 from src.core.event_types import Events
 from manager.app.models import AgentStatus
+from src.runtime.contracts import EngineCommandType
 from src.signals.internal_client import InternalSignalClient
 
 if TYPE_CHECKING:
@@ -45,8 +49,17 @@ class ManagerSignalRouter:
         self._event_bus: EventBus | None = None
         self._client: InternalSignalClient | None = None
         self._current_symbols: set[str] = set()
+        self._stop_event = threading.Event()
+        self._delivery_thread: threading.Thread | None = None
 
     def start(self, active_agents: list["AgentRegistration"]) -> None:
+        self._stop_event.clear()
+        self._delivery_thread = threading.Thread(
+            target=self._delivery_loop,
+            name="signal-delivery",
+            daemon=True,
+        )
+        self._delivery_thread.start()
         self._event_bus = EventBus()
         symbols = self._union_symbols(active_agents)
         self._current_symbols = symbols
@@ -71,6 +84,9 @@ class ManagerSignalRouter:
         )
 
     def stop(self) -> None:
+        self._stop_event.set()
+        if self._delivery_thread:
+            self._delivery_thread.join(timeout=5)
         if self._client:
             self._client.stop()
             self._client = None
@@ -101,13 +117,33 @@ class ManagerSignalRouter:
                 ws_token=self._signal_ws_token,
             )
 
+    def forward_execution_event(
+        self, agent_id: str, event_type: str, data: dict
+    ) -> None:
+        if not self._client or not self._client.send_execution_event(
+            agent_id, event_type, data
+        ):
+            logger.warning(
+                "Execution event %s from %s could not be forwarded",
+                event_type,
+                agent_id,
+            )
+
+    def health_report(self) -> dict:
+        configured = bool(self._signal_ws_url)
+        connected = bool(self._client and self._client.is_connected())
+        return {
+            "configured": configured,
+            "connected": connected,
+            "ok": configured and connected,
+        }
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _on_signal(self, signal) -> None:
         """Fan out a triggered signal to all RUNNING agents whose broker+symbol match."""
         agents = self._registry.list_agents()
         signal_dict = signal.to_dict() if hasattr(signal, "to_dict") else {}
-        delivered = 0
         eligible = 0
 
         for reg in agents:
@@ -119,18 +155,17 @@ class ManagerSignalRouter:
             if signal.broker and not _broker_matches(signal.broker, reg.mt5_server):
                 continue
             eligible += 1
-            sent = self._event_hub.deliver_signal(reg.agent_id, signal_dict)
-            if sent:
-                delivered += 1
-                logger.debug(
-                    "Signal %s → agent %s (%s)",
-                    signal.id, reg.agent_id, reg.mt5_server,
-                )
-            else:
-                logger.warning(
-                    "Signal %s: agent %s not connected via IPC — signal dropped",
-                    signal.id, reg.agent_id,
-                )
+            reference_ms = int(
+                getattr(signal, "emitted_at", 0)
+                or getattr(signal, "created_at", 0)
+                or time.time() * 1000
+            )
+            self._registry.queue_signal_delivery(
+                signal.id,
+                reg.agent_id,
+                signal_dict,
+                reference_ms + 120_000,
+            )
 
         broker = signal.broker or "(any)"
         direction = (
@@ -140,8 +175,66 @@ class ManagerSignalRouter:
         )
         logger.info(
             "Signal %s %s %s broker=%s → %d/%d agent(s)",
-            signal.id, signal.symbol, direction, broker, delivered, eligible,
+            signal.id, signal.symbol, direction, broker, 0, eligible,
         )
+        if eligible == 0:
+            self._registry.record_signal_outcome(
+                signal.id,
+                "__routing__",
+                signal_dict,
+                "no_eligible_agent",
+            )
+        self._process_due_deliveries()
+
+    def _delivery_loop(self) -> None:
+        while not self._stop_event.wait(1.0):
+            try:
+                self._process_due_deliveries()
+            except Exception:
+                logger.exception("Signal delivery retry loop failed")
+
+    def _process_due_deliveries(self) -> None:
+        now = int(time.time() * 1000)
+        for delivery in self._registry.list_due_signal_deliveries(now):
+            signal_id = delivery["signal_id"]
+            agent_id = delivery["agent_id"]
+            if now >= int(delivery["expires_at"]):
+                self._registry.update_signal_delivery(
+                    signal_id, agent_id, status="expired", error="signal expired"
+                )
+                continue
+            command_id = delivery.get("command_id")
+            if command_id:
+                outcome = self._registry.get_command_outcome(command_id)
+                if outcome and outcome["status"] == "completed":
+                    self._registry.update_signal_delivery(
+                        signal_id, agent_id, status="accepted"
+                    )
+                    continue
+                if outcome and outcome["status"] == "rejected":
+                    self._registry.update_signal_delivery(
+                        signal_id,
+                        agent_id,
+                        status="rejected",
+                        error=str(outcome.get("error") or ""),
+                    )
+                    continue
+            attempts = int(delivery["attempts"]) + 1
+            command_id = self._event_hub.submit_command(
+                agent_id,
+                EngineCommandType.SIGNAL_DELIVER,
+                {"signal": json.loads(delivery["payload_json"])},
+            )
+            delay_ms = min(30_000, 1000 * (2 ** min(attempts - 1, 5)))
+            self._registry.update_signal_delivery(
+                signal_id,
+                agent_id,
+                status="sent" if command_id else "pending",
+                command_id=command_id,
+                attempts=attempts,
+                next_attempt_at=now + delay_ms,
+                error="" if command_id else "agent not connected",
+            )
 
     @staticmethod
     def _union_symbols(agents: list["AgentRegistration"]) -> set[str]:

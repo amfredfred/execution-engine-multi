@@ -121,18 +121,25 @@ function Ensure-DataDirs {
             Write-Host "  Created: $p" -ForegroundColor DarkGray
         }
     }
-    # Grant the current user modify rights (so the process can write registry.db etc.)
+    # Private ACL: runtime identity can modify; Administrators and SYSTEM retain control.
     $acl = Get-Acl $base
-    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($identity in @(
         "$env:USERDOMAIN\$env:USERNAME",
-        "Modify",
-        "ContainerInherit,ObjectInherit",
-        "None",
-        "Allow"
-    )
-    $acl.SetAccessRule($rule)
-    Set-Acl -Path $base -AclObject $acl -ErrorAction SilentlyContinue
-    Set-Acl -Path (Join-Path $base "agents") -AclObject $acl -ErrorAction SilentlyContinue
+        "BUILTIN\Administrators",
+        "NT AUTHORITY\SYSTEM"
+    )) {
+        $rights = if ($identity -eq "$env:USERDOMAIN\$env:USERNAME") { "Modify" } else { "FullControl" }
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $identity,
+            $rights,
+            "ContainerInherit,ObjectInherit",
+            "None",
+            "Allow"
+        )
+        $acl.AddAccessRule($rule) | Out-Null
+    }
+    Set-Acl -Path $base -AclObject $acl
 }
 
 function Validate-Exe {
@@ -162,21 +169,20 @@ function _install {
     Write-Host "    Exe   : $AppExe"
     Write-Host "    Args  : --manager"
     Write-Host "    User  : $env:USERDOMAIN\$env:USERNAME"
-    Write-Host "    Delay : 20 s after logon"
+    Write-Host "    Start : at boot, without interactive login"
 
     $action = New-ScheduledTaskAction `
         -Execute          $AppExe `
         -Argument         "--manager" `
         -WorkingDirectory $EngineDir
 
-    # Run at logon for this user. The Manager is the sole Gateway owner.
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    $trigger = New-ScheduledTaskTrigger -AtStartup
     $trigger.Delay = "PT20S"
 
     $settings = New-ScheduledTaskSettingsSet `
         -MultipleInstances      IgnoreNew `
         -ExecutionTimeLimit     ([TimeSpan]::Zero) `
-        -RestartCount           5 `
+        -RestartCount           999 `
         -RestartInterval        (New-TimeSpan -Minutes 2) `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
@@ -184,8 +190,8 @@ function _install {
 
     $principal = New-ScheduledTaskPrincipal `
         -UserId    "$env:USERDOMAIN\$env:USERNAME" `
-        -LogonType Interactive `
-        -RunLevel  Highest
+        -LogonType S4U `
+        -RunLevel  Limited
 
     Register-ScheduledTask `
         -TaskName    $TaskName `
@@ -207,7 +213,7 @@ function _install {
     Write-Host "  Task state: $state" -ForegroundColor $col
 
     Write-Host ""
-    Write-Host "  AQ Manager will start automatically 20 s after each login."
+    Write-Host "  AQ Manager will start automatically 20 s after each boot."
     Write-Host "  Data  : $env:PROGRAMDATA\Apex Quantel\manager\"
     Write-Host "  Logs  : $env:PROGRAMDATA\Apex Quantel\manager\logs\manager.log"
     Write-Host ""

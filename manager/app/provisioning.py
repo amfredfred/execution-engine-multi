@@ -8,12 +8,12 @@ Pre-flight slot check against the gateway before provisioning.
 from __future__ import annotations
 
 import logging
-import socket
 import time
 import urllib.request
 import urllib.error
 import json
-import uuid
+import shutil
+import secrets as _secrets
 from pathlib import Path
 
 from manager.app.config_store import AgentConfigStore
@@ -68,51 +68,62 @@ class AgentProvisioner:
         now = int(time.time() * 1000)
 
         # 2. Allocate IDs
-        agent_id = self._next_agent_id()
-        port     = self._next_port()
+        agent_id, port = self._registry.allocate_agent_identity(_BASE_MONITORING_PORT)
         data_dir = str(self._agents_data_dir / agent_id)
 
-        # 3. Create data directory
-        Path(data_dir).mkdir(parents=True, exist_ok=True)
+        data_path = Path(data_dir)
+        lease_acquired = False
+        agent_persisted = False
+        secret_persisted = False
+        try:
+            data_path.mkdir(parents=True, exist_ok=False)
 
-        # 4. Build registration
-        reg = AgentRegistration(
-            agent_id=agent_id,
-            display_name=display_name,
-            status=AgentStatus.PROVISIONED,
-            desired_status="stopped",
-            config_path=str(Path(data_dir) / "config.yaml"),
-            data_dir=data_dir,
-            terminal_path=terminal_path,
-            mt5_login=mt5_login,
-            mt5_server=mt5_server,
-            monitoring_port=port,
-            symbols=symbols,
-            created_at=now,
-            updated_at=now,
-            last_seen_at=None,
-            pid=None,
-        )
+            reg = AgentRegistration(
+                agent_id=agent_id,
+                display_name=display_name,
+                status=AgentStatus.PROVISIONED,
+                desired_status="stopped",
+                config_path=str(Path(data_dir) / "config.yaml"),
+                data_dir=data_dir,
+                terminal_path=terminal_path,
+                mt5_login=mt5_login,
+                mt5_server=mt5_server,
+                monitoring_port=port,
+                symbols=symbols,
+                created_at=now,
+                updated_at=now,
+                last_seen_at=None,
+                pid=None,
+            )
 
-        # 5. Write redacted config.yaml
-        self._config_store.write_agent_config(reg, config_overrides)
+            self._config_store.write_agent_config(reg, config_overrides)
 
-        # 6. Store per-agent secrets
-        self._secrets.set_secret(agent_id, "mt5_password", mt5_password)
+            self._secrets.set_secret(agent_id, "mt5_password", mt5_password)
+            secret_persisted = True
+            self._secrets.set_secret(agent_id, "ipc_token", _secrets.token_hex(32))
 
-        # 7. Acquire terminal lease
-        if terminal_path:
-            acquired = self._registry.acquire_terminal_lease(terminal_path, agent_id)
-            if not acquired:
-                # Lease already held by another agent — warn but continue
-                logger.warning(
-                    "Terminal %s is already leased; provisioning %s anyway",
-                    terminal_path, agent_id,
+            if terminal_path:
+                lease_acquired = self._registry.acquire_terminal_lease(
+                    terminal_path, agent_id
                 )
+                if not lease_acquired:
+                    raise ValueError(f"Terminal {terminal_path} is already leased")
 
-        # 8. Persist agent
-        self._registry.upsert_agent(reg)
-        self._registry.emit_event("agent.provisioned", agent_id, {"display_name": display_name})
+            self._registry.upsert_agent(reg)
+            agent_persisted = True
+            self._registry.emit_event(
+                "agent.provisioned", agent_id, {"display_name": display_name}
+            )
+        except Exception:
+            if agent_persisted:
+                self._registry.delete_agent(agent_id)
+            if lease_acquired:
+                self._registry.release_agent_leases(agent_id)
+            if secret_persisted:
+                self._secrets.delete_agent_secrets(agent_id)
+            self._registry.release_agent_allocation(agent_id)
+            shutil.rmtree(data_path, ignore_errors=True)
+            raise
 
         logger.info("Provisioned agent %s (%s) on port %d", agent_id, display_name, port)
         return reg
@@ -223,6 +234,13 @@ class AgentProvisioner:
         # Remove per-agent secrets
         self._secrets.delete_agent_secrets(agent_id)
 
+        data_path = Path(reg.data_dir)
+        if data_path.exists():
+            archive_dir = self._agents_data_dir / "archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            target = archive_dir / f"{agent_id}-{int(time.time())}"
+            shutil.move(str(data_path), str(target))
+
         # Operations and manager events retain the historical audit trail.
         self._registry.delete_agent(agent_id)
         self._registry.emit_event("agent.deprovisioned", agent_id, {})
@@ -253,7 +271,7 @@ class AgentProvisioner:
 
     def _check_slot_available(self) -> None:
         if not self._gateway_http_url:
-            return   # no gateway URL configured — skip check
+            raise SlotLimitError("Gateway HTTP URL is required for slot verification")
 
         activation_key = self._secrets.get_activation_key()
         if not activation_key:
@@ -283,32 +301,6 @@ class AgentProvisioner:
         except SlotLimitError:
             raise
         except urllib.error.URLError as exc:
-            logger.warning("Slot check failed (gateway unreachable): %s — proceeding", exc)
+            raise SlotLimitError(f"Slot verification unavailable: {exc.reason}") from exc
         except Exception as exc:
-            logger.warning("Slot check error: %s — proceeding", exc)
-
-    def _next_agent_id(self) -> str:
-        existing = {a.agent_id for a in self._registry.list_agents()}
-        for i in range(1000):
-            candidate = f"agent-{i}"
-            if candidate not in existing:
-                return candidate
-        return f"agent-{uuid.uuid4().hex[:8]}"
-
-    def _next_port(self) -> int:
-        used = {a.monitoring_port for a in self._registry.list_agents()}
-        port = _BASE_MONITORING_PORT
-        while port < 9000:
-            if port not in used and _port_available(port):
-                return port
-            port += 1
-        raise RuntimeError("No available monitoring port found in range 8081-8999")
-
-
-def _port_available(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(("127.0.0.1", port))
-            return True
-        except OSError:
-            return False
+            raise SlotLimitError(f"Slot verification failed: {exc}") from exc

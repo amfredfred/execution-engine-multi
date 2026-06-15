@@ -8,9 +8,14 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+MAX_WIRE_BYTES = 1_048_576
+MAX_ENVELOPE_AGE_MS = 300_000
+MAX_CLOCK_SKEW_MS = 60_000
+
 
 class EngineCommandType(StrEnum):
     SIGNAL_DELIVER = "signal.deliver"
+    CLOSE_TRADE = "trade.close"
     PAUSE = "engine.pause"
     RESUME = "engine.resume"
     STOP = "engine.stop"
@@ -88,3 +93,33 @@ def _payload(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Envelope payload must be an object")
     return payload
+
+
+def validate_envelope_timestamp(timestamp_ms: int, *, now_ms: int | None = None) -> None:
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    if timestamp_ms < now - MAX_ENVELOPE_AGE_MS:
+        raise ValueError("Envelope is stale")
+    if timestamp_ms > now + MAX_CLOCK_SKEW_MS:
+        raise ValueError("Envelope timestamp is too far in the future")
+
+
+def validate_command_payload(command: EngineCommand) -> None:
+    payload = command.payload
+    if command.command_type == EngineCommandType.SIGNAL_DELIVER:
+        signal = payload.get("signal")
+        if not isinstance(signal, dict) or not str(signal.get("id") or "").strip():
+            raise ValueError("signal.deliver requires signal object with id")
+    elif command.command_type == EngineCommandType.CLOSE_TRADE:
+        if not str(payload.get("trade_id") or "").strip():
+            raise ValueError("trade.close requires trade_id")
+    elif command.command_type == EngineCommandType.EVENT_ACK:
+        if not str(payload.get("event_id") or "").strip():
+            raise ValueError("event.ack requires event_id")
+    elif command.command_type in {
+        EngineCommandType.PAUSE,
+        EngineCommandType.RESUME,
+        EngineCommandType.STOP,
+        EngineCommandType.EMERGENCY_STOP,
+    }:
+        if payload:
+            raise ValueError(f"{command.command_type} does not accept a payload")

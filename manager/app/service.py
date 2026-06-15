@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import secrets as _secrets
+import threading
 from pathlib import Path
 
 from manager.app.api import LocalManagerApi
@@ -25,6 +26,7 @@ from manager.app.registry import AgentRegistry
 from manager.app.secrets import ManagerSecretStore
 from manager.app.signal_router import ManagerSignalRouter
 from manager.app.terminal_discovery import TerminalDiscovery
+from src.runtime.contracts import EngineCommandType
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,9 @@ class ManagerRuntime:
             registry=self.registry,
             token=ipc_token,
             port=ipc_port,
+            token_resolver=lambda agent_id: self.secrets.get_secret(
+                agent_id, "ipc_token"
+            ) or ipc_token,
         )
 
         # ── Process Supervisor + Desired State ────────────────────────────
@@ -100,11 +105,9 @@ class ManagerRuntime:
             signal_ws_url=signal_ws_url,
             signal_ws_token=signal_ws_token,
         )
-        # Agent snapshots and execution events are forwarded via UIBridge on each
-        # worker; no additional callback is needed at the manager level.
         self.event_hub.set_event_callbacks(
             on_snapshot=lambda agent_id, snap: None,
-            on_execution_event=lambda agent_id, ev, data: None,
+            on_execution_event=self.signal_router.forward_execution_event,
         )
         self.event_hub.set_worker_ready_callback(self.config_revisions.worker_ready)
 
@@ -121,40 +124,90 @@ class ManagerRuntime:
             port=api_port,
             storage_path=storage_path,
             on_activation_key_changed=self._on_activation_key_changed,
+            on_api_token_rotated=self.secrets.set_api_token,
+            health_provider=self.health_report,
         )
 
         # ── Reconciliation + Migration ────────────────────────────────────
         self.reconciler = RestartReconciler(self.registry, self.supervisor)
+        self._license_stop = threading.Event()
+        self._license_thread: threading.Thread | None = None
 
     def start(self) -> None:
         logger.info("ManagerRuntime starting")
-
-        # 1. Clean up stale state from previous run
-        self.reconciler.run()
-
-        # 2. Start manager-owned worker command/event IPC
-        self.event_hub.start()
-
-        # 3. Start gateway signal router
-        active_agents = self.registry.list_agents()
-        self.signal_router.start(active_agents)
-
-        # 4. Start REST API
-        self.api.start()
-
-        # 5. Start desired-state reconciliation loop
-        self.desired.start()
+        started = []
+        try:
+            self.reconciler.run()
+            self.registry.enforce_retention()
+            self.event_hub.start()
+            started.append(self.event_hub)
+            active_agents = self.registry.list_agents()
+            self.signal_router.start(active_agents)
+            started.append(self.signal_router)
+            self.api.start()
+            started.append(self.api)
+            self.desired.start()
+            started.append(self.desired)
+            self._license_thread = threading.Thread(
+                target=self._license_monitor_loop,
+                name="license-monitor",
+                daemon=True,
+            )
+            self._license_thread.start()
+        except Exception:
+            logger.exception("ManagerRuntime startup failed; rolling back")
+            for component in reversed(started):
+                try:
+                    component.stop()
+                except Exception:
+                    logger.exception("Manager startup rollback failed")
+            raise
 
         logger.info("ManagerRuntime online")
 
-    def stop(self) -> None:
+    def stop(self, force: bool = False) -> None:
+        safe, reason = self.can_shutdown()
+        if not safe and not force:
+            raise RuntimeError(reason)
         logger.info("ManagerRuntime stopping")
+        license_stop = getattr(self, "_license_stop", None)
+        if license_stop:
+            license_stop.set()
+        license_thread = getattr(self, "_license_thread", None)
+        if license_thread:
+            license_thread.join(timeout=5)
         self.desired.stop()
+        self._stop_all_workers()
         self.signal_router.stop()
         self.api.stop()
         self.event_hub.stop()
-        self._stop_all_workers()
         logger.info("ManagerRuntime stopped")
+
+    def _license_monitor_loop(self) -> None:
+        while not self._license_stop.wait(60):
+            try:
+                info = self.provisioner.get_license_info(force=True)
+            except Exception as exc:
+                info = {"valid": False, "error": str(exc)}
+            if info.get("valid"):
+                continue
+            reason = info.get("error") or "license invalid or expired"
+            logger.error("License enforcement paused new entries: %s", reason)
+            for reg in self.registry.list_agents():
+                if reg.desired_status == "running":
+                    self.event_hub.submit_command(
+                        reg.agent_id, EngineCommandType.PAUSE, {}
+                    )
+
+    def can_shutdown(self) -> tuple[bool, str]:
+        exposed = [
+            f"{agent_id} ({snapshot.open_trades} open)"
+            for agent_id, snapshot in self.event_hub.get_all_snapshots().items()
+            if snapshot.open_trades > 0
+        ]
+        if exposed:
+            return False, "Unsafe shutdown refused; open positions: " + ", ".join(exposed)
+        return True, ""
 
     def _stop_all_workers(self) -> None:
         """Terminate all running agent subprocesses before the manager exits."""
@@ -184,6 +237,24 @@ class ManagerRuntime:
     def _on_activation_key_changed(self, activation_key: str) -> None:
         """Called when the manager license key changes (used for provisioning only)."""
         logger.info("Manager activation key updated")
+
+    def health_report(self) -> dict:
+        registry_ok = False
+        try:
+            registry_ok = self.registry.health_check()
+        except Exception:
+            logger.exception("Registry health check failed")
+        workers = self.event_hub.health_report()
+        signal_manager = self.signal_router.health_report()
+        ipc_ok = self.event_hub._server is not None
+        ok = registry_ok and ipc_ok and workers["ok"] and signal_manager["ok"]
+        return {
+            "ok": ok,
+            "registry": {"ok": registry_ok},
+            "ipc": {"ok": ipc_ok},
+            "signal_manager": signal_manager,
+            **workers,
+        }
 
     # ── Token bootstrap ───────────────────────────────────────────────────
 

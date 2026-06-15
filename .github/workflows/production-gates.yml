@@ -1,0 +1,35 @@
+name: Production Gates
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    env:
+      TEMP: ${{ github.workspace }}\.test-tmp
+      TMP: ${{ github.workspace }}\.test-tmp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]" pyinstaller
+      - run: New-Item -ItemType Directory -Force $env:TEMP
+      - run: python -m compileall -q src manager tests
+      - run: python -m pytest
+      - run: python -m ruff check src manager tests --select F821,RUF006,F841,B008,B904,RUF012
+      - run: python scripts/scan_secrets.py
+      - run: powershell -ExecutionPolicy Bypass -File installer/build.ps1 -Clean -SkipInstaller
+
+  secrets-history:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2

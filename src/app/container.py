@@ -7,7 +7,9 @@ Returns a plain dataclass — no framework required.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import threading
+from typing import TYPE_CHECKING
 
 from src.brokers.mt5.client import Mt5Client
 from src.brokers.mt5.orders import Mt5Orders
@@ -32,6 +34,9 @@ from src.infra.database import TradeRepository
 from src.strategies.adapter import PassthroughAdapter
 from src.strategies.router import StrategyRouter
 
+if TYPE_CHECKING:
+    from src.infra.ui_bridge import UIBridge
+
 
 @dataclass
 class AppContainer:
@@ -51,6 +56,8 @@ class AppContainer:
     cluster_tracker: ClusterRiskTracker
     equity_throttle: EquityThrottleTracker
     ui_bridge: "UIBridge | None" = None
+    runtime_ready: threading.Event = field(default_factory=threading.Event)
+    runtime_error: str | None = None
 
 
 def build_container(config: AppConfig) -> AppContainer:

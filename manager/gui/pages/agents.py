@@ -135,7 +135,7 @@ class AgentCard(ctk.CTkFrame):
         )
         self._metrics_lbl.pack(side="left")
         self._gw_lbl = ctk.CTkLabel(
-            metrics_row, text=f"{gw_dot} GW",
+            metrics_row, text=f"{gw_dot} IPC",
             font=ctk.CTkFont(size=11), text_color=gw_col,
         )
         self._gw_lbl.pack(side="right")
@@ -173,7 +173,7 @@ class AgentCard(ctk.CTkFrame):
         self._metrics_lbl.configure(text=f"Bal: {bal}  Eq: {eq}  Trades: {a.open_trades}")
         gw_dot = "●" if a.gateway_connected else "○"
         self._gw_lbl.configure(
-            text=f"{gw_dot} GW",
+            text=f"{gw_dot} IPC",
             text_color=GREEN if a.gateway_connected else MUTED,
         )
 

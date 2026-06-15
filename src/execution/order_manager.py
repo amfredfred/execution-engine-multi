@@ -253,6 +253,7 @@ class OrderManager:
                             order_type,
                             result.executed_price,
                             symbol_info,
+                            filled_volume,
                         )
                         raise RuntimeError(
                             f"Slippage {slippage_pct_of_stop * 100:.1f}% of stop distance "
@@ -299,6 +300,7 @@ class OrderManager:
         order_type: int,
         price: float,
         symbol_info: SymbolInfo,
+        filled_volume: float,
     ) -> None:
         try:
             tick = self._positions.get_current_tick(plan.symbol)
@@ -311,7 +313,12 @@ class OrderManager:
                 ticket=ticket,
                 symbol=plan.symbol,
                 side=order_type,
-                volume=plan.lot_size,
+                volume=normalise_lots(
+                    filled_volume,
+                    symbol_info.volume_step,
+                    symbol_info.volume_min,
+                    symbol_info.volume_max,
+                ),
                 price=close_price,
                 slippage=self._cfg.slippage,
                 magic=self._cfg.magic,
@@ -325,6 +332,7 @@ class OrderManager:
                 "Emergency close FAILED — manual intervention required",
                 extra={"ticket": ticket, "symbol": plan.symbol},
             )
+            raise
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
