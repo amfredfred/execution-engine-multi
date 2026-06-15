@@ -46,7 +46,7 @@ class ManagerRuntime:
         self.secrets  = ManagerSecretStore(self.registry)
 
         # ── Config / Discovery / Provisioning ─────────────────────────────
-        self.config_store = AgentConfigStore(self.secrets)
+        self.config_store = AgentConfigStore(self.secrets, self.registry)
         self.discovery    = TerminalDiscovery(self.registry)
         self.provisioner  = AgentProvisioner(
             registry=self.registry,

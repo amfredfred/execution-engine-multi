@@ -643,6 +643,15 @@ class ManagerConfig:
             / "Apex Quantel"
             / "Multi"
         )
+        # Load .env files in priority order so SIGNAL_MANAGER_TOKEN and other
+        # secrets survive a reboot without needing system-wide env vars.
+        #   1. ProgramData manager dir — writable in production installs
+        #   2. CWD — picked up in dev / portable layouts
+        # override=False means existing env vars win (system vars are authoritative).
+        for dotenv_path in [base / "manager" / ".env", Path(".env")]:
+            if dotenv_path.exists():
+                load_dotenv(dotenv_path=str(dotenv_path), override=False)
+                break
         gw_ws = _INTERNAL_DEFAULTS["gateway"]["ws_url"]
         from urllib.parse import urlparse
         parsed = urlparse(gw_ws)

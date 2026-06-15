@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from pathlib import Path
 
 import yaml
 
 from src.manager.models import AgentRegistration
+from src.manager.registry import AgentRegistry
 from src.manager.secrets import ManagerSecretStore
 
 logger = logging.getLogger(__name__)
@@ -27,8 +29,9 @@ _REDACT_PATHS = [
 
 
 class AgentConfigStore:
-    def __init__(self, secrets: ManagerSecretStore) -> None:
+    def __init__(self, secrets: ManagerSecretStore, registry: AgentRegistry) -> None:
         self._secrets = secrets
+        self._registry = registry
 
     def write_agent_config(
         self,
@@ -43,6 +46,11 @@ class AgentConfigStore:
             "gateway": {
                 "activation_key": "",   # injected via APEX_ACTIVATION_KEY env var
                 "symbols": reg.symbols,
+                "engine_id": _make_engine_id(
+                    self._registry.get_or_create_device_name(),
+                    self._registry.get_or_create_device_id(),
+                    reg.agent_id,
+                ),
             },
             "mt5": {
                 "login":    reg.mt5_login,
@@ -95,6 +103,21 @@ class AgentConfigStore:
         config_path = Path(reg.data_dir) / "config.yaml"
         with open(config_path, "w", encoding="utf-8") as fh:
             yaml.safe_dump(document, fh, default_flow_style=False, allow_unicode=True)
+
+
+def _make_engine_id(hostname: str, device_id: str, agent_id: str) -> str:
+    """Build a stable, unique engine_id for this agent on this machine.
+
+    Format: <hostname-slug>-<uuid6>-<agent_id>
+    Example: desktop-abc123-a1b2c3-agent-0
+
+    The hostname slug is lowercase alphanumeric + hyphens, capped at 16 chars
+    so the full ID stays readable in logs. The 6-char UUID prefix makes it
+    globally unique even when two machines share the same hostname.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", hostname.lower()).strip("-")[:16]
+    uid6 = device_id.replace("-", "")[:6]
+    return f"{slug}-{uid6}-{agent_id}"
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

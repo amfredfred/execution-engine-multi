@@ -103,11 +103,14 @@ hidden_imports += [
 datas = [
     # Version file — used by the auto-updater script and GUI header
     ("version.txt", "."),
-    # Default config — placed next to the exe so the GUI finds it on first launch
-    ("config.yaml",  "."),
     # GUI icons — loaded by src/gui/assets.py for sidebar logo + window icon
     ("src/gui/assets/icon.png", "src/gui/assets"),
     ("src/gui/assets/icon.ico", "src/gui/assets"),
+    # Clean default config — build.ps1 copies config.example.yaml here after packaging
+    # so we never accidentally ship a developer config that contains credentials.
+    # If you run pyinstaller directly (not via build.ps1) this file will be absent from
+    # _internal/; the GUI falls back to %ProgramData%\Apex Quantel\config.yaml which it
+    # creates on first save — that's the correct first-run experience.
 ]
 
 # Include the full tzdata IANA timezone database

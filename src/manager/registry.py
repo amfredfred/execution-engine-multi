@@ -379,6 +379,29 @@ class AgentRegistry:
                 (event_id, agent_id, _now_ms()),
             )
 
+    # ── Device identity ───────────────────────────────────────────────────
+
+    def get_or_create_device_id(self) -> str:
+        """Return a stable UUID for this installation, generating one on first call."""
+        existing = self.load_device_state("device_id")
+        if existing:
+            return existing
+        import uuid as _uuid
+        new_id = str(_uuid.uuid4())
+        self.save_device_state("device_id", new_id)
+        logger.info("Generated new device_id: %s", new_id)
+        return new_id
+
+    def get_or_create_device_name(self) -> str:
+        """Return a stable human-readable device name (hostname), captured once."""
+        existing = self.load_device_state("device_name")
+        if existing:
+            return existing
+        import socket
+        name = socket.gethostname()
+        self.save_device_state("device_name", name)
+        return name
+
     # ── Device state (KV) ─────────────────────────────────────────────────
 
     def save_device_state(self, key: str, value: str) -> None:

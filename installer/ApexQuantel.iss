@@ -65,10 +65,6 @@ Name: "desktopicon"; \
 ; ============================================================================
 [Dirs]
 ; ============================================================================
-; Per-install writable dirs under {app}
-Name: "{app}\data";                   Permissions: authusers-modify
-Name: "{app}\logs";                   Permissions: authusers-modify
-
 ; ProgramData — shared data store for Manager + all agents
 ; Permissions: authusers-modify lets the task-scheduler process write without elevation
 Name: "{commonappdata}\Apex Quantel";                         Permissions: authusers-modify
@@ -146,11 +142,11 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
 ; ============================================================================
 [UninstallDelete]
 ; ============================================================================
-; Remove runtime artefacts written by the app
-Type: files;          Name: "{app}\config.yaml"
-Type: filesandordirs; Name: "{app}\data"
-Type: filesandordirs; Name: "{app}\logs"
-Type: filesandordirs; Name: "{app}\__pycache__"
+; Remove the clean shipped default config that lives inside the PyInstaller
+; _internal\ bundle.  The user's real config lives in %ProgramData% and is
+; intentionally kept across uninstalls (it holds agent registrations and trade
+; history).  Agents can delete %ProgramData%\Apex Quantel\ manually for a
+; clean slate.
+Type: files; Name: "{app}\apex-quant-trader-agent\_internal\config.yaml"
 ; NOTE: {commonappdata}\Apex Quantel\Multi\ is intentionally NOT deleted on
 ; uninstall — it contains the agent registry, trade history, and user config.
-; Users can delete it manually if they want a clean slate.

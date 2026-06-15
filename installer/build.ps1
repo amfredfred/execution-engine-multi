@@ -102,6 +102,21 @@ if ($SkipPackage) {
         Write-Host "  ERROR: dist\apex-quant-trader-agent\ was not created." -ForegroundColor Red
         exit 1
     }
+
+    # --- Inject clean default config (never ship developer credentials) ----------
+    # PyInstaller no longer includes config.yaml in datas (engine.spec removed it).
+    # We copy config.example.yaml into _internal\ so fresh installs get a
+    # working template without any real MT5 credentials or activation keys.
+    $exampleCfg  = Join-Path $EngineDir "config.example.yaml"
+    $internalDir = Join-Path $distDir "_internal"
+    $shippedCfg  = Join-Path $internalDir "config.yaml"
+    if (Test-Path $exampleCfg) {
+        if (-not (Test-Path $internalDir)) { New-Item -ItemType Directory -Path $internalDir -Force | Out-Null }
+        Copy-Item $exampleCfg $shippedCfg -Force
+        Write-Host "      Config : _internal\config.yaml  (clean copy from config.example.yaml)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  WARNING: config.example.yaml not found — no default config in dist." -ForegroundColor Yellow
+    }
 }
 
 Write-Host ""
