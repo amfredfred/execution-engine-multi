@@ -333,6 +333,18 @@ class ConfigManager:
     def programdata_data_path() -> Path:
         return _PROGDATA / "data"
 
+    @staticmethod
+    def programdata_manager_path() -> Path:
+        return _PROGDATA / "manager"
+
+    @staticmethod
+    def programdata_manager_logs_path() -> Path:
+        return _PROGDATA / "manager" / "logs"
+
+    @staticmethod
+    def programdata_agents_path() -> Path:
+        return _PROGDATA / "manager" / "agents"
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

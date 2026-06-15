@@ -131,20 +131,38 @@ class WorkerEventClient:
                 break
 
     def _build_snapshot(self) -> dict:
-        telemetry = (
-            self._container.ui_bridge.build_remote_snapshot()
-            if self._container.ui_bridge
-            else {}
-        )
-        account = telemetry.get("metrics", {}) if isinstance(telemetry, dict) else {}
+        c = self._container
+        try:
+            acct = c.mt5_positions.get_account_info()
+            balance: float | None = acct.balance
+            equity: float | None = acct.equity
+            mt5_ok = True
+        except Exception:
+            balance = None
+            equity = None
+            mt5_ok = c.mt5_client.is_connected()
+
+        open_trades = c.position_store.get_open_trades()
+        lt = c.loss_tracker.stats()
+
+        telemetry = {
+            "connected": mt5_ok,
+            "metrics": {
+                "balance": balance,
+                "equity": equity,
+                "open_trades": len(open_trades),
+                "daily_loss_pct": lt.get("daily_loss_pct", 0.0),
+                "daily_budget": lt.get("daily_budget", 0.0),
+            },
+        }
         return {
             "status": "RUNNING",
-            "mt5_connected": bool(telemetry.get("connected")),
+            "mt5_connected": mt5_ok,
             "mt5_login": self._account_login,
             "mt5_server": self._account_server,
-            "balance": account.get("balance"),
-            "equity": account.get("equity"),
-            "open_trades": len(self._container.position_store.get_open_trades()),
+            "balance": balance,
+            "equity": equity,
+            "open_trades": len(open_trades),
             "manager_connected": self.is_connected(),
             "uptime_sec": int(time.time() - self._started_at),
             "observed_at": int(time.time() * 1000),

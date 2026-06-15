@@ -1,13 +1,13 @@
-"""Boot-time reconciliation for manager and isolated worker state."""
+﻿"""Boot-time reconciliation for manager and isolated worker state."""
 
 from __future__ import annotations
 
 import logging
 import os
 
-from src.manager.models import AgentStatus
-from src.manager.process_supervisor import ProcessSupervisor
-from src.manager.registry import AgentRegistry
+from manager.app.models import AgentStatus
+from manager.app.process_supervisor import ProcessSupervisor
+from manager.app.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

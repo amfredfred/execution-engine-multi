@@ -1,4 +1,4 @@
-"""
+﻿"""
 Unit test: terminal lease atomicity in AgentRegistry.
 
 Two concurrent threads race to acquire the same terminal path — exactly one
@@ -11,7 +11,7 @@ import threading
 
 import pytest
 
-from src.manager.registry import AgentRegistry
+from manager.app.registry import AgentRegistry
 
 
 @pytest.fixture

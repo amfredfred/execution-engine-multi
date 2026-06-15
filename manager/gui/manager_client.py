@@ -22,7 +22,7 @@ _POLL_INTERVAL = 3.0          # seconds
 _MANAGER_BASE  = "http://127.0.0.1:8870"
 _TOKEN_PATH    = (
     Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
-    / "Apex Quantel" / "Multi" / "manager" / "api_token.txt"
+    / "Apex Quantel" / "manager" / "api_token.txt"
 )
 
 
@@ -64,12 +64,33 @@ class ManagerClient:
     def is_reachable(self) -> bool:
         """Best-effort connectivity check (sync, call from a background thread)."""
         try:
-            self._get("/health")
-            return True
+            self._refresh_token()
+            if not self._token:
+                return False
+            url = self._base_url + "/agents"
+            req = urllib.request.Request(
+                url,
+                method="GET",
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=3) as _:
+                return True
         except Exception:
             return False
 
     # ── Operations ────────────────────────────────────────────────────────────
+
+    def get_agents(self, on_done: Callable[[dict], None]) -> None:
+        """GET /agents in a background thread — call after mutations to refresh immediately."""
+        def _run():
+            try:
+                on_done(self._get("/agents"))
+            except Exception:
+                on_done({"agents": []})
+        threading.Thread(target=_run, daemon=True).start()
 
     def submit_operation(
         self,
@@ -135,6 +156,42 @@ class ManagerClient:
             except Exception as exc:
                 logger.debug("GET /terminals failed: %s", exc)
                 on_done([])
+        threading.Thread(target=_run, daemon=True).start()
+
+    def send_agent_command(
+        self,
+        agent_id: str,
+        command: str,
+        payload: dict | None = None,
+        on_done: Callable[[bool, str | None], None] | None = None,
+    ) -> None:
+        """POST /agents/{id}/command in a background thread."""
+        def _run():
+            body = {"command": command, **(payload or {})}
+            try:
+                result = self._post(f"/agents/{agent_id}/command", body)
+                if on_done:
+                    on_done(bool(result.get("ok")), None)
+            except Exception as exc:
+                if on_done:
+                    on_done(False, str(exc))
+        threading.Thread(target=_run, daemon=True).start()
+
+    def get_agent_logs(
+        self,
+        agent_id: str,
+        lines: int = 200,
+        on_done: Callable[[list[str]], None] | None = None,
+    ) -> None:
+        """GET /agents/{id}/logs in a background thread."""
+        def _run():
+            try:
+                result = self._get(f"/agents/{agent_id}/logs?lines={lines}")
+                if on_done:
+                    on_done(result.get("lines", []))
+            except Exception:
+                if on_done:
+                    on_done([])
         threading.Thread(target=_run, daemon=True).start()
 
     def get_license_info(self, on_done: Callable[[dict], None]) -> None:
@@ -209,11 +266,31 @@ class ManagerClient:
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read())
 
+    def patch_agent_config(
+        self,
+        agent_id: str,
+        patch: dict,
+        on_done: Callable[[dict], None] | None = None,
+    ) -> None:
+        """PATCH /agents/{id}/config — merge patch into agent config, auto-restarts agent."""
+        def _run():
+            try:
+                result = self._patch(f"/agents/{agent_id}/config", patch)
+                if on_done:
+                    on_done(result)
+            except Exception as exc:
+                if on_done:
+                    on_done({"error": str(exc)})
+        threading.Thread(target=_run, daemon=True).start()
+
     def _get(self, path: str) -> dict:
         return self._request("GET", path)
 
     def _post(self, path: str, body: dict) -> dict:
         return self._request("POST", path, body)
+
+    def _patch(self, path: str, body: dict) -> dict:
+        return self._request("PATCH", path, body)
 
     def _delete(self, path: str) -> dict:
         return self._request("DELETE", path)

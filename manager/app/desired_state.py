@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/desired_state.py — Reconciliation loop that keeps actual state
 matching desired state with exponential backoff and CRASH_LOOP detection.
 """
@@ -9,9 +9,9 @@ import logging
 import threading
 import time
 
-from src.manager.models import AgentStatus
-from src.manager.process_supervisor import ProcessSupervisor
-from src.manager.registry import AgentRegistry
+from manager.app.models import AgentStatus
+from manager.app.process_supervisor import ProcessSupervisor
+from manager.app.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

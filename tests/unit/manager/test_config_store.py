@@ -1,4 +1,4 @@
-"""
+﻿"""
 Unit test: AgentConfigStore must never write secrets to disk.
 
 Confirms that mt5.password, gateway.activation_key, and
@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from src.manager.config_store import AgentConfigStore
-from src.manager.models import AgentRegistration, AgentStatus
+from manager.app.config_store import AgentConfigStore
+from manager.app.models import AgentRegistration, AgentStatus
 
 
 def _make_reg(tmp_path: Path, agent_id: str = "agent-0") -> AgentRegistration:

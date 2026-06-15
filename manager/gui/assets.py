@@ -1,8 +1,8 @@
 """
-src/gui/assets.py — Icon and image loading helpers for the Apex GUI.
+manager/gui/assets.py — Icon and image loading helpers for the Apex GUI.
 
-Locates assets in both the development layout (src/gui/assets/)
-and the PyInstaller onedir bundle (_MEIPASS/src/gui/assets/).
+Locates assets in both the development layout (manager/gui/assets/)
+and the PyInstaller onedir bundle (_MEIPASS/manager/gui/assets/).
 """
 from __future__ import annotations
 
@@ -16,25 +16,25 @@ import customtkinter as ctk
 
 def _assets_dir() -> Path:
     """Return the assets directory for both dev and packaged environments."""
-    # 1. PyInstaller bundle: _MEIPASS/src/gui/assets
+    # 1. PyInstaller bundle: _MEIPASS/manager/gui/assets
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
-        p = Path(meipass) / "src" / "gui" / "assets"
+        p = Path(meipass) / "manager" / "gui" / "assets"
         if p.exists():
             return p
 
-    # 2. Next to this file: src/gui/assets/
+    # 2. Next to this file: manager/gui/assets/
     here = Path(__file__).resolve().parent / "assets"
     if here.exists():
         return here
 
-    # 3. Walk up from executable looking for src/gui/assets
+    # 3. Walk up from executable looking for manager/gui/assets
     exe_dir = Path(sys.executable).parent
     for depth in range(5):
         candidate = exe_dir
         for _ in range(depth):
             candidate = candidate.parent
-        p = candidate / "src" / "gui" / "assets"
+        p = candidate / "manager" / "gui" / "assets"
         if p.exists():
             return p
 

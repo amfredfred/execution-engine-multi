@@ -19,7 +19,6 @@ from src.execution.engine import ExecutionEngine
 from src.execution.order_manager import OrderManager
 from src.execution.planner import TradePlanner
 from src.infra.db import Database
-from src.infra.ui_bridge import UIBridge
 from src.positions.manager import PositionManager
 from src.positions.store import PositionStore
 from src.risk.cluster_tracker import ClusterRiskTracker
@@ -52,7 +51,6 @@ class AppContainer:
     cluster_tracker: ClusterRiskTracker
     equity_throttle: EquityThrottleTracker
     ui_bridge: "UIBridge | None" = None
-    worker_events: "WorkerEventClient | None" = None
 
 
 def build_container(config: AppConfig) -> AppContainer:

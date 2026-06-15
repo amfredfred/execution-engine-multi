@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/operations.py — Serialised, idempotent agent operations.
 
 All mutating actions (start/stop/provision/remove) flow through here
@@ -15,14 +15,14 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
-from src.manager.models import AgentStatus, OperationRecord
+from manager.app.models import AgentStatus, OperationRecord
 
 if TYPE_CHECKING:
-    from src.manager.event_hub import EngineEventHub
-    from src.manager.desired_state import DesiredStateSupervisor
-    from src.manager.process_supervisor import ProcessSupervisor
-    from src.manager.provisioning import AgentProvisioner
-    from src.manager.registry import AgentRegistry
+    from manager.app.event_hub import EngineEventHub
+    from manager.app.desired_state import DesiredStateSupervisor
+    from manager.app.process_supervisor import ProcessSupervisor
+    from manager.app.provisioning import AgentProvisioner
+    from manager.app.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

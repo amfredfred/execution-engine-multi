@@ -87,14 +87,20 @@ hidden_imports = [
     "_tkinter",
 ]
 
-# Collect every submodule in our src package
+# Collect every submodule in src (engine business logic) and manager (orchestration + GUI)
 hidden_imports += collect_submodules("src")
+hidden_imports += collect_submodules("manager")
 
 # Explicitly add pages that collect_submodules misses (import-time side-effects
 # or circular refs prevent auto-discovery at spec build time)
 hidden_imports += [
-    "src.gui.pages.agents",
-    "src.gui.pages.manager",
+    "manager.gui.pages.agents",
+    "manager.gui.pages.manager",
+    "manager.gui.pages.agent_dashboard",
+    "manager.gui.pages.settings",
+    "manager.gui.pages.risk",
+    "manager.gui.pages.logs",
+    "manager.gui.pages.activity",
 ]
 
 # ---------------------------------------------------------------------------
@@ -103,9 +109,9 @@ hidden_imports += [
 datas = [
     # Version file — used by the auto-updater script and GUI header
     ("version.txt", "."),
-    # GUI icons — loaded by src/gui/assets.py for sidebar logo + window icon
-    ("src/gui/assets/icon.png", "src/gui/assets"),
-    ("src/gui/assets/icon.ico", "src/gui/assets"),
+    # GUI icons — loaded by manager/gui/assets.py for sidebar logo + window icon
+    ("manager/gui/assets/icon.png", "manager/gui/assets"),
+    ("manager/gui/assets/icon.ico", "manager/gui/assets"),
     # Clean default config — build.ps1 copies config.example.yaml here after packaging
     # so we never accidentally ship a developer config that contains credentials.
     # If you run pyinstaller directly (not via build.ps1) this file will be absent from

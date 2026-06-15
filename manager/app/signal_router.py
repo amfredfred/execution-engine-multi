@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/signal_router.py — Receives consensus signals from Signal Manager → fans out to agents.
 
 The manager connects to the Signal Manager's internal GatewayServer (port 8765 by
@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING
 
 from src.core.event_bus import EventBus
 from src.core.event_types import Events
-from src.manager.models import AgentStatus
+from manager.app.models import AgentStatus
 from src.signals.internal_client import InternalSignalClient
 
 if TYPE_CHECKING:
-    from src.manager.event_hub import EngineEventHub
-    from src.manager.models import AgentRegistration
-    from src.manager.registry import AgentRegistry
+    from manager.app.event_hub import EngineEventHub
+    from manager.app.models import AgentRegistration
+    from manager.app.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

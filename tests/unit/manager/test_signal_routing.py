@@ -1,10 +1,10 @@
-from unittest.mock import MagicMock
+﻿from unittest.mock import MagicMock
 
 from src.domain.signal_interface import InboundSignal
 from src.core.event_bus import EventBus
 from src.core.event_types import Events
-from src.manager.models import AgentRegistration, AgentStatus
-from src.manager.signal_router import ManagerSignalRouter
+from manager.app.models import AgentRegistration, AgentStatus
+from manager.app.signal_router import ManagerSignalRouter
 from src.runtime.contracts import EngineCommand, EngineCommandType
 from src.worker.event_client import WorkerEventClient
 

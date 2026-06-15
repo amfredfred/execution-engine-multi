@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/secrets.py — DPAPI-backed secret store for the manager.
 
 Two scopes stored in registry.db's agent_secrets table:
@@ -15,7 +15,7 @@ import logging
 import sys
 import time
 
-from src.manager.registry import AgentRegistry
+from manager.app.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

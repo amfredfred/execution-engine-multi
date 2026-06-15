@@ -1,4 +1,4 @@
-"""Manager-owned IPC hub for all isolated execution workers."""
+﻿"""Manager-owned IPC hub for all isolated execution workers."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import threading
 import time
 from typing import Callable
 
-from src.manager.models import AgentSnapshot, AgentStatus
-from src.manager.registry import AgentRegistry
+from manager.app.models import AgentSnapshot, AgentStatus
+from manager.app.registry import AgentRegistry
 from src.runtime.contracts import (
     EngineCommand,
     EngineCommandType,

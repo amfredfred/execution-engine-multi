@@ -1,4 +1,4 @@
-"""Apex Quantel manager control-plane GUI."""
+﻿"""Apex Quantel manager control-plane GUI."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from pathlib import Path
 
 import customtkinter as ctk
 
-from src.gui.assets import load_logo_image, set_window_icon
-from src.gui.config_manager import ConfigManager
-from src.gui.installer import InstallerService
-from src.gui.manager_client import ManagerClient, _TOKEN_PATH
-from src.gui.manager_state import ManagerAppState
-from src.gui.theme import BASE, GREEN, LINE, MUTED, NAV_ACTIVE_BG, NAV_HOVER, SURFACE
+from manager.gui.assets import load_logo_image, set_window_icon
+from manager.gui.config_manager import ConfigManager
+from manager.gui.installer import InstallerService
+from manager.gui.manager_client import ManagerClient, _TOKEN_PATH
+from manager.gui.manager_state import ManagerAppState
+from manager.gui.theme import BASE, GREEN, LINE, MUTED, NAV_ACTIVE_BG, NAV_HOVER, SURFACE
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -48,13 +48,29 @@ class ApexTraderGUI(ctk.CTk):
         self._body = ctk.CTkFrame(self, fg_color=BASE, corner_radius=0)
         self._body.pack(fill="both", expand=True)
         if _TOKEN_PATH.exists():
-            self._show_control_plane()
+            self._show_connecting()
         else:
             self._show_onboarding()
 
+    def _show_connecting(self) -> None:
+        """Token file exists — verify manager is actually reachable before skipping onboarding."""
+        self._clear_root()
+        frame = ctk.CTkFrame(self._body, fg_color="transparent")
+        frame.place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkLabel(
+            frame, text="Connecting to AQ Manager…",
+            font=ctk.CTkFont(size=14), text_color=MUTED,
+        ).pack()
+
+        def _check() -> None:
+            reachable = self.manager_client.is_reachable()
+            self.after(0, self._show_control_plane if reachable else self._show_onboarding)
+
+        threading.Thread(target=_check, daemon=True).start()
+
     def _show_onboarding(self) -> None:
         self._clear_root()
-        from src.gui.onboarding import OnboardingWizard
+        from manager.gui.onboarding import OnboardingWizard
 
         wizard = OnboardingWizard(
             self._body,
@@ -79,14 +95,24 @@ class ApexTraderGUI(ctk.CTk):
         self._logo = logo
         self._nav_buttons = {}
         self._pages = {}
-        from src.gui.pages.agents import AddAgentPage, AgentsPage
-        from src.gui.pages.agent_dashboard import AgentDashboardPage
-        from src.gui.pages.manager import ManagerPage
+        from manager.gui.pages.agents import AddAgentPage, AgentsPage
+        from manager.gui.pages.agent_dashboard import AgentDashboardPage
+        from manager.gui.pages.manager import ManagerPage
+        from manager.gui.pages.settings import SettingsPage
+        from manager.gui.pages.risk import RiskPage
+        from manager.gui.pages.logs import LogsPage
+        from manager.gui.pages.activity import ActivityPage
 
-        self._pages["Agents"] = AgentsPage(content, self)
-        self._pages["Manager"] = ManagerPage(content, self)
-        self._pages["AddAgent"] = AddAgentPage(content, self)
+        self._pages["Agents"]         = AgentsPage(content, self)
+        self._pages["Manager"]        = ManagerPage(content, self)
+        self._pages["AddAgent"]       = AddAgentPage(content, self)
         self._pages["AgentDashboard"] = AgentDashboardPage(content, self)
+        self._pages["Settings"]       = SettingsPage(content, self)
+        self._pages["Risk"]           = RiskPage(content, self)
+        self._pages["Logs"]           = LogsPage(content, self)
+        self._pages["Activity"]       = ActivityPage(content, self)
+
+        # Sidebar nav — only top-level fleet pages; sub-pages navigated programmatically
         for name in ("Agents", "Manager"):
             button = ctk.CTkButton(
                 sidebar,
@@ -99,6 +125,18 @@ class ApexTraderGUI(ctk.CTk):
             )
             button.pack(fill="x", padx=10, pady=3)
             self._nav_buttons[name] = button
+
+        # Settings gear at the bottom of the sidebar
+        ctk.CTkFrame(sidebar, height=1, fg_color=LINE, corner_radius=0).pack(
+            fill="x", side="bottom", padx=10, pady=(0, 4),
+        )
+        ctk.CTkButton(
+            sidebar, text="⚙  Settings", anchor="w",
+            fg_color="transparent", hover_color=NAV_HOVER, text_color=MUTED,
+            font=ctk.CTkFont(size=12),
+            command=lambda: self.navigate("Settings"),
+        ).pack(fill="x", padx=10, pady=4, side="bottom")
+
         self.navigate("Agents")
 
     def navigate(self, page: str) -> None:

@@ -1,4 +1,4 @@
-"""
+﻿"""
 src/gui/components.py — Reusable UI building blocks.
 
 All widgets use the shared theme palette.  Import from here instead of
@@ -23,7 +23,7 @@ from typing import Callable, Optional
 
 import customtkinter as ctk
 
-from src.gui.theme import (
+from manager.gui.theme import (
     GREEN, RED, YELLOW, INFO, MUTED, TEXT, TEXT_SOFT,
     SURFACE_RAISED, BASE, LINE, LINE_STRONG,
     SUCCESS_BG, SUCCESS_BORDER,
@@ -515,7 +515,7 @@ class EngineStatusBadge(ctk.CTkFrame):
         self._lbl.pack(padx=10, pady=4)
 
     def update(self, lifecycle: "EngineLifecycle") -> None:  # type: ignore[name-defined]
-        from src.gui.theme import GREEN, RED, YELLOW, MUTED
+        from manager.gui.theme import GREEN, RED, YELLOW, MUTED
         color = {
             "good":   GREEN,
             "warn":   YELLOW,
@@ -529,7 +529,7 @@ class EngineStatusBadge(ctk.CTkFrame):
 
     def set_manager_status(self, online: bool) -> None:
         """Override badge to show manager connectivity instead of legacy service status."""
-        from src.gui.theme import GREEN, RED, SUCCESS_BG, SUCCESS_BORDER, DANGER_BG, DANGER_BORDER
+        from manager.gui.theme import GREEN, RED, SUCCESS_BG, SUCCESS_BORDER, DANGER_BG, DANGER_BORDER
         if online:
             self._lbl.configure(text="●  Manager running", text_color=GREEN)
             self.configure(fg_color=SUCCESS_BG, border_color=SUCCESS_BORDER)

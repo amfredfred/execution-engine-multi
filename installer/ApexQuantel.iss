@@ -67,11 +67,10 @@ Name: "desktopicon"; \
 ; ============================================================================
 ; ProgramData — shared data store for Manager + all agents
 ; Permissions: authusers-modify lets the task-scheduler process write without elevation
-Name: "{commonappdata}\Apex Quantel";                         Permissions: authusers-modify
-Name: "{commonappdata}\Apex Quantel\Multi";                   Permissions: authusers-modify
-Name: "{commonappdata}\Apex Quantel\Multi\manager";           Permissions: authusers-modify
-Name: "{commonappdata}\Apex Quantel\Multi\manager\logs";      Permissions: authusers-modify
-Name: "{commonappdata}\Apex Quantel\Multi\agents";            Permissions: authusers-modify
+Name: "{commonappdata}\Apex Quantel";                              Permissions: authusers-modify
+Name: "{commonappdata}\Apex Quantel\manager";                      Permissions: authusers-modify
+Name: "{commonappdata}\Apex Quantel\manager\logs";                 Permissions: authusers-modify
+Name: "{commonappdata}\Apex Quantel\manager\agents";               Permissions: authusers-modify
 
 ; ============================================================================
 [Files]

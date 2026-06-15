@@ -1,4 +1,4 @@
-"""Apex Quantel entry points: GUI, manager service, and isolated engine worker."""
+﻿"""Apex Quantel entry points: GUI, manager service, and isolated engine worker."""
 
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ def _worker_main(engine_id: str) -> None:
     lock_file = _acquire_lock(Path(config.storage_path) / "execution-engine.lock")
 
     container = build_container(config)
+
     worker_events = WorkerEventClient(
         engine_id=engine_id,
         manager_host="127.0.0.1",
@@ -49,7 +50,6 @@ def _worker_main(engine_id: str) -> None:
         account_server=config.mt5.server,
         storage_path=config.storage_path,
     )
-    container.worker_events = worker_events
     container.signal_consumer.set_execution_event_sink(worker_events.emit_execution_event)
 
     bootstrap(container, config, expose_local_ui=False)
@@ -68,6 +68,7 @@ def _worker_main(engine_id: str) -> None:
         while not stop_event.wait(1):
             pass
     finally:
+        worker_events.stop()
         shutdown(container)
         lock_file.close()
 
@@ -81,7 +82,7 @@ def _manager_main() -> None:
 
     from src.config.settings import ManagerConfig
     from src.infra.logger import add_file_handler, setup_logging
-    from src.manager.service import ManagerRuntime
+    from manager.app.service import ManagerRuntime
 
     setup_logging("INFO", ZoneInfo("UTC"))
     config = ManagerConfig.defaults()
@@ -129,7 +130,7 @@ def _gui_main() -> None:
             return
         _gui_main._mutex = mutex  # type: ignore[attr-defined]
 
-    from src.gui.app import ApexTraderGUI, resolve_config_path
+    from manager.gui.app import ApexTraderGUI, resolve_config_path
 
     ApexTraderGUI(config_path=resolve_config_path(sys.argv)).mainloop()
 

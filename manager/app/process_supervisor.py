@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/process_supervisor.py — Spawn and kill agent subprocesses.
 
 Does NOT make lifecycle decisions — that is DesiredStateSupervisor's job.
@@ -16,9 +16,9 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from src.manager.models import AgentStatus
-from src.manager.registry import AgentRegistry
-from src.manager.secrets import ManagerSecretStore
+from manager.app.models import AgentStatus
+from manager.app.registry import AgentRegistry
+from manager.app.secrets import ManagerSecretStore
 
 logger = logging.getLogger(__name__)
 

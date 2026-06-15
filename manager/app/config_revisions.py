@@ -1,4 +1,4 @@
-"""Durable, validated engine configuration revisions."""
+﻿"""Durable, validated engine configuration revisions."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from pathlib import Path
 import yaml
 
 from src.config.settings import AppConfig
-from src.manager.config_store import AgentConfigStore
-from src.manager.models import AgentStatus
-from src.manager.process_supervisor import ProcessSupervisor
-from src.manager.registry import AgentRegistry
+from manager.app.config_store import AgentConfigStore
+from manager.app.models import AgentStatus
+from manager.app.process_supervisor import ProcessSupervisor
+from manager.app.registry import AgentRegistry
 
 
 class ConfigRevisionService:

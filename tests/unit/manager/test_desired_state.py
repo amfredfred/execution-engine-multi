@@ -1,4 +1,4 @@
-"""
+﻿"""
 Unit test: DesiredStateSupervisor crash-loop detection and reconciliation.
 
 Uses mock registry/supervisor/channel — no real processes spawned.
@@ -10,13 +10,13 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from src.manager.desired_state import (
+from manager.app.desired_state import (
     DesiredStateSupervisor,
     _BACKOFF_DELAYS,
     _CRASH_THRESHOLD,
     _CRASH_WINDOW_S,
 )
-from src.manager.models import AgentRegistration, AgentStatus
+from manager.app.models import AgentRegistration, AgentStatus
 
 
 def _make_reg(

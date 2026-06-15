@@ -1,4 +1,4 @@
-"""
+﻿"""
 src/gui/onboarding.py — First-run setup wizard (multi-agent edition).
 
 The wizard is presented as a centered card (not full-screen).
@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 import customtkinter as ctk
 
-from src.gui.theme import (
+from manager.gui.theme import (
     GREEN, RED, YELLOW, MUTED, TEXT, TEXT_SOFT,
     SURFACE, SURFACE_RAISED, BASE, LINE, LINE_STRONG,
     SUCCESS_BG, SUCCESS_BORDER,
@@ -31,13 +31,13 @@ from src.gui.theme import (
     WARNING_BG, WARNING_BORDER,
     INFO_BG, INFO_BORDER, INFO,
 )
-from src.gui.components import (
+from manager.gui.components import (
     ActionBanner, PrimaryButton, SectionCard, labeled_field,
 )
 
 if TYPE_CHECKING:
-    from src.gui.config_manager import ConfigManager
-    from src.gui.installer import InstallerService
+    from manager.gui.config_manager import ConfigManager
+    from manager.gui.installer import InstallerService
 
 # Path written by the Manager on first successful start
 _TOKEN_PATH = (
@@ -258,7 +258,7 @@ class _StepWelcome(_WizardStep):
         outer.pack(fill="x", padx=48, pady=(24, 16))
 
         try:
-            from src.gui.assets import load_logo_image
+            from manager.gui.assets import load_logo_image
             logo_img = load_logo_image(size=(56, 56))
         except Exception:
             logo_img = None

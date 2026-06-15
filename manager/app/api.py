@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/api.py — LocalManagerApi: REST server on port 8870.
 
 Uses stdlib http.server.ThreadingHTTPServer — no extra dependencies.
@@ -14,15 +14,15 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 if TYPE_CHECKING:
-    from src.manager.event_hub import EngineEventHub
-    from src.manager.config_revisions import ConfigRevisionService
-    from src.manager.operations import OperationRunner
-    from src.manager.provisioning import AgentProvisioner
-    from src.manager.registry import AgentRegistry
-    from src.manager.terminal_discovery import TerminalDiscovery
+    from manager.app.event_hub import EngineEventHub
+    from manager.app.config_revisions import ConfigRevisionService
+    from manager.app.operations import OperationRunner
+    from manager.app.provisioning import AgentProvisioner
+    from manager.app.registry import AgentRegistry
+    from manager.app.terminal_discovery import TerminalDiscovery
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +167,16 @@ class LocalManagerApi:
                         d["snapshot"] = snap.__dict__
                     self._send(200, d)
 
+                elif len(parts) == 3 and parts[0] == "agents" and parts[2] == "logs":
+                    reg = registry.get_agent(parts[1])
+                    if not reg:
+                        self._send(404, {"error": "Agent not found"})
+                        return
+                    qs = parse_qs(urlparse(self.path).query)
+                    lines = int((qs.get("lines") or ["200"])[0])
+                    log_lines = _tail_agent_log(reg.agent_id, lines)
+                    self._send(200, {"agent_id": reg.agent_id, "lines": log_lines})
+
                 elif parts == ["terminals"]:
                     terminals = discovery.scan()
                     self._send(200, {"terminals": [
@@ -231,6 +241,17 @@ class LocalManagerApi:
                         self._send(404, {"error": "Agent not found"})
                         return
 
+                    if action == "command":
+                        body = self._body()
+                        ok, err = _dispatch_agent_command(
+                            event_hub, agent_id, body
+                        )
+                        if ok:
+                            self._send(200, {"ok": True})
+                        else:
+                            self._send(400, {"error": err or "command failed"})
+                        return
+
                     op_map = {
                         "start":            "start",
                         "stop":             "stop",
@@ -282,3 +303,54 @@ class LocalManagerApi:
                     self._send(404, {"error": "Not found"})
 
         return Handler
+
+
+# ── Module-level helpers ──────────────────────────────────────────────────────
+
+def _tail_agent_log(agent_id: str, max_lines: int) -> list[str]:
+    """Read the last max_lines lines from the agent's log file."""
+    import os
+    from src.config.settings import ManagerConfig
+    cfg = ManagerConfig.defaults()
+    log_path = Path(cfg.agents_data_dir) / agent_id / "logs" / "engine.log"
+    if not log_path.exists():
+        for name in ("engine.log", "stdout.log", "apex.log"):
+            candidate = Path(cfg.agents_data_dir) / agent_id / "logs" / name
+            if candidate.exists():
+                log_path = candidate
+                break
+        else:
+            return []
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            all_lines = fh.readlines()
+        return [l.rstrip() for l in all_lines[-max_lines:]]
+    except OSError:
+        return []
+
+
+def _dispatch_agent_command(event_hub, agent_id: str, body: dict):
+    """Forward a GUI command to the worker via IPC. Returns (ok, error_or_None)."""
+    from src.runtime.contracts import EngineCommandType
+    cmd = str(body.get("command", "")).strip()
+    _MAP = {
+        "pause":          EngineCommandType.PAUSE,
+        "resume":         EngineCommandType.RESUME,
+        "emergency_stop": EngineCommandType.EMERGENCY_STOP,
+    }
+    if cmd == "close_trade":
+        trade_id = str(body.get("trade_id", "")).strip()
+        if not trade_id:
+            return False, "trade_id required for close_trade"
+        ok = event_hub.send_command(
+            agent_id,
+            EngineCommandType.SIGNAL_DELIVER,
+            {"command": "close_trade", "trade_id": trade_id},
+        )
+        return ok, None if ok else "agent not connected"
+
+    cmd_type = _MAP.get(cmd)
+    if not cmd_type:
+        return False, f"unknown command: {cmd}"
+    ok = event_hub.send_command(agent_id, cmd_type, {})
+    return ok, None if ok else "agent not connected"

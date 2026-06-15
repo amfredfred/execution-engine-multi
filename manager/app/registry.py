@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/registry.py — SQLite persistence for the manager layer.
 
 Single WAL-mode database at <storage_path>/registry.db.
@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from src.manager.models import (
+from manager.app.models import (
     AgentRegistration,
     AgentSnapshot,
     AgentStatus,

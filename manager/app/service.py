@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/service.py — ManagerRuntime: top-level orchestrator.
 
 Wires all manager components and owns their lifecycle.
@@ -11,20 +11,20 @@ import logging
 import secrets as _secrets
 from pathlib import Path
 
-from src.manager.api import LocalManagerApi
-from src.manager.models import AgentStatus
-from src.manager.config_store import AgentConfigStore
-from src.manager.config_revisions import ConfigRevisionService
-from src.manager.desired_state import DesiredStateSupervisor
-from src.manager.event_hub import EngineEventHub
-from src.manager.operations import OperationRunner
-from src.manager.process_supervisor import ProcessSupervisor
-from src.manager.provisioning import AgentProvisioner
-from src.manager.reconciliation import RestartReconciler
-from src.manager.registry import AgentRegistry
-from src.manager.secrets import ManagerSecretStore
-from src.manager.signal_router import ManagerSignalRouter
-from src.manager.terminal_discovery import TerminalDiscovery
+from manager.app.api import LocalManagerApi
+from manager.app.models import AgentStatus
+from manager.app.config_store import AgentConfigStore
+from manager.app.config_revisions import ConfigRevisionService
+from manager.app.desired_state import DesiredStateSupervisor
+from manager.app.event_hub import EngineEventHub
+from manager.app.operations import OperationRunner
+from manager.app.process_supervisor import ProcessSupervisor
+from manager.app.provisioning import AgentProvisioner
+from manager.app.reconciliation import RestartReconciler
+from manager.app.registry import AgentRegistry
+from manager.app.secrets import ManagerSecretStore
+from manager.app.signal_router import ManagerSignalRouter
+from manager.app.terminal_discovery import TerminalDiscovery
 
 logger = logging.getLogger(__name__)
 

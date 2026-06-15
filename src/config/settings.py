@@ -641,14 +641,14 @@ class ManagerConfig:
         base = (
             Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
             / "Apex Quantel"
-            / "Multi"
+            / "manager"
         )
         # Load .env files in priority order so SIGNAL_MANAGER_TOKEN and other
         # secrets survive a reboot without needing system-wide env vars.
         #   1. ProgramData manager dir — writable in production installs
         #   2. CWD — picked up in dev / portable layouts
         # override=False means existing env vars win (system vars are authoritative).
-        for dotenv_path in [base / "manager" / ".env", Path(".env")]:
+        for dotenv_path in [base / ".env", Path(".env")]:
             if dotenv_path.exists():
                 load_dotenv(dotenv_path=str(dotenv_path), override=False)
                 break
@@ -657,7 +657,7 @@ class ManagerConfig:
         parsed = urlparse(gw_ws)
         gw_http = f"https://{parsed.netloc}"
         return cls(
-            storage_path=str(base / "manager"),
+            storage_path=str(base),
             agents_data_dir=str(base / "agents"),
             signal_ws_url=os.environ.get("SIGNAL_MANAGER_WS_URL", "ws://127.0.0.1:8765"),
             signal_ws_token=os.environ.get("SIGNAL_MANAGER_TOKEN", ""),

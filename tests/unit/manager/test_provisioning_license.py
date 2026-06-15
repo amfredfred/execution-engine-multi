@@ -1,9 +1,9 @@
-import json
+﻿import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.manager.provisioning import AgentProvisioner, LicensePreflightError
+from manager.app.provisioning import AgentProvisioner, LicensePreflightError
 
 
 def _provisioner(activation_key: str | None = "TR-VALID-LICENSE-KEY-1234"):

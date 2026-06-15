@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/config_store.py — Writes/reads per-agent config.yaml files.
 
 Secrets (mt5.password, gateway.activation_key) are NEVER written to disk.
@@ -14,9 +14,9 @@ from pathlib import Path
 
 import yaml
 
-from src.manager.models import AgentRegistration
-from src.manager.registry import AgentRegistry
-from src.manager.secrets import ManagerSecretStore
+from manager.app.models import AgentRegistration
+from manager.app.registry import AgentRegistry
+from manager.app.secrets import ManagerSecretStore
 
 logger = logging.getLogger(__name__)
 

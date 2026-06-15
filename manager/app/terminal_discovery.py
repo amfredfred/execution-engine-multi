@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/terminal_discovery.py — Scan for installed MT5 terminals and classify their state.
 
 All terminals are always returned — never hidden — with state labels:
@@ -12,8 +12,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from src.manager.models import AgentStatus, TerminalInfo
-from src.manager.registry import AgentRegistry
+from manager.app.models import AgentStatus, TerminalInfo
+from manager.app.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-"""
+﻿"""
 manager/provisioning.py — Agent lifecycle provisioning.
 
 Creates/removes per-agent directories, config files, secrets, and terminal leases.
@@ -16,11 +16,11 @@ import json
 import uuid
 from pathlib import Path
 
-from src.manager.config_store import AgentConfigStore
-from src.manager.models import AgentRegistration, AgentStatus
-from src.manager.registry import AgentRegistry
-from src.manager.secrets import ManagerSecretStore
-from src.manager.terminal_discovery import TerminalDiscovery
+from manager.app.config_store import AgentConfigStore
+from manager.app.models import AgentRegistration, AgentStatus
+from manager.app.registry import AgentRegistry
+from manager.app.secrets import ManagerSecretStore
+from manager.app.terminal_discovery import TerminalDiscovery
 
 logger = logging.getLogger(__name__)
 

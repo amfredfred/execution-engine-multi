@@ -1,11 +1,11 @@
-from pathlib import Path
+﻿from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.manager.event_hub import EngineEventHub
-from src.manager.models import AgentRegistration, AgentStatus
-from src.manager.operations import OperationRunner
-from src.manager.reconciliation import RestartReconciler, _pid_is_alive
-from src.manager.registry import AgentRegistry
+from manager.app.event_hub import EngineEventHub
+from manager.app.models import AgentRegistration, AgentStatus
+from manager.app.operations import OperationRunner
+from manager.app.reconciliation import RestartReconciler, _pid_is_alive
+from manager.app.registry import AgentRegistry
 from src.runtime.contracts import EngineEvent, EngineEventType
 
 

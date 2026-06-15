@@ -113,8 +113,8 @@ function Kill-ManagerOrphans {
 
 function Ensure-DataDirs {
     # Create ProgramData directories for the manager and agent data
-    $base = Join-Path $env:PROGRAMDATA "Apex Quantel\Multi"
-    foreach ($d in @("manager", "agents", "manager\logs")) {
+    $base = Join-Path $env:PROGRAMDATA "Apex Quantel\manager"
+    foreach ($d in @(".", "logs", "agents")) {
         $p = Join-Path $base $d
         if (-not (Test-Path $p)) {
             New-Item -ItemType Directory -Path $p -Force | Out-Null
@@ -122,7 +122,7 @@ function Ensure-DataDirs {
         }
     }
     # Grant the current user modify rights (so the process can write registry.db etc.)
-    $acl = Get-Acl (Join-Path $base "manager")
+    $acl = Get-Acl $base
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
         "$env:USERDOMAIN\$env:USERNAME",
         "Modify",
@@ -131,8 +131,8 @@ function Ensure-DataDirs {
         "Allow"
     )
     $acl.SetAccessRule($rule)
-    Set-Acl -Path (Join-Path $base "manager") -AclObject $acl -ErrorAction SilentlyContinue
-    Set-Acl -Path (Join-Path $base "agents")  -AclObject $acl -ErrorAction SilentlyContinue
+    Set-Acl -Path $base -AclObject $acl -ErrorAction SilentlyContinue
+    Set-Acl -Path (Join-Path $base "agents") -AclObject $acl -ErrorAction SilentlyContinue
 }
 
 function Validate-Exe {
@@ -208,8 +208,8 @@ function _install {
 
     Write-Host ""
     Write-Host "  AQ Manager will start automatically 20 s after each login."
-    Write-Host "  Data  : $env:PROGRAMDATA\Apex Quantel\Multi\"
-    Write-Host "  Logs  : $env:PROGRAMDATA\Apex Quantel\Multi\manager\logs\manager.log"
+    Write-Host "  Data  : $env:PROGRAMDATA\Apex Quantel\manager\"
+    Write-Host "  Logs  : $env:PROGRAMDATA\Apex Quantel\manager\logs\manager.log"
     Write-Host ""
     Write-Host "  Open the AQ Agent GUI to add and manage MT5 accounts." -ForegroundColor Cyan
 }

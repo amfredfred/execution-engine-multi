@@ -1,4 +1,4 @@
-"""
+﻿"""
 src/gui/pages/agents.py — Fleet view + Add Agent page.
 
 AgentsPage   — scrollable grid of managed-agent cards (fleet mode).
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
-from src.gui.theme import (
+from manager.gui.theme import (
     GREEN, RED, YELLOW, MUTED, INFO,
     TEXT, TEXT_SOFT, BASE, SURFACE, SURFACE_RAISED,
     LINE, LINE_STRONG,
@@ -20,11 +20,11 @@ from src.gui.theme import (
     DANGER_BG, DANGER_BORDER, INFO_BG, INFO_BORDER,
     page_header,
 )
-from src.gui.components import ActionBanner, PrimaryButton
+from manager.gui.components import ActionBanner, PrimaryButton
 
 if TYPE_CHECKING:
-    from src.gui.app import ApexTraderGUI
-    from src.gui.manager_state import AgentCardState
+    from manager.gui.app import ApexTraderGUI
+    from manager.gui.manager_state import AgentCardState
 
 # ── Symbol display names ──────────────────────────────────────────────────────
 
@@ -329,8 +329,8 @@ class AgentsPage(ctk.CTkFrame):
             card.pack(fill="x", pady=(0, 8))
             self._cards.append(card)
 
-    def on_snapshot(self, payload: dict) -> None:
-        pass
+    def on_navigate_to(self) -> None:
+        self._refresh(self.app.manager_state.agents)
 
 
 # ── Add agent page (replaces the old modal dialog) ────────────────────────────
@@ -735,8 +735,12 @@ class AddAgentPage(ctk.CTkFrame):
 
     def _on_done(self, op_id: str | None) -> None:
         if op_id:
-            self._banner.show(f"Agent provisioned (op: {op_id}). Returning to fleet…", "good")
-            self.after(1500, lambda: self.app.navigate("Agents"))
+            self._banner.show("Agent provisioned. Returning to fleet…", "good")
+            # Force an immediate re-poll so the new agent is visible on arrival
+            self.app.manager_client.get_agents(
+                lambda data: self.app._queue.put({"type": "agents", "payload": data})
+            )
+            self.after(1200, lambda: self.app.navigate("Agents"))
         else:
             self._banner.show(
                 "Failed to provision agent — is the Manager running?\n"

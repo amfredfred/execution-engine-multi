@@ -1,13 +1,13 @@
-import json
+﻿import json
 import socket
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.manager.config_revisions import ConfigRevisionService
-from src.manager.event_hub import EngineEventHub
-from src.manager.models import AgentRegistration, AgentStatus
-from src.manager.registry import AgentRegistry
+from manager.app.config_revisions import ConfigRevisionService
+from manager.app.event_hub import EngineEventHub
+from manager.app.models import AgentRegistration, AgentStatus
+from manager.app.registry import AgentRegistry
 from src.runtime.contracts import (
     EngineCommand,
     EngineCommandType,

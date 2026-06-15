@@ -48,20 +48,20 @@ def bootstrap(
     container.trade_repo.init()
     metrics.init_db(container.db)
 
-    # ── UIBridge (start FIRST so the GUI can connect immediately) ─────────────
-    from src.infra.ui_bridge import UIBridge  # local import avoids circular dep
-    container.ui_bridge = UIBridge(container, config, port=config.monitoring_port)
-    container.signal_consumer.set_snapshot_provider(
-        container.ui_bridge.build_remote_snapshot
-    )
-    _wire_commands(container)
+    # ── UIBridge (GUI-only mode — workers use IPC, not UIBridge) ─────────────
     if expose_local_ui:
+        from src.infra.ui_bridge import UIBridge  # local import avoids circular dep
+        container.ui_bridge = UIBridge(container, config, port=config.monitoring_port)
+        container.signal_consumer.set_snapshot_provider(
+            container.ui_bridge.build_remote_snapshot
+        )
         container.ui_bridge.start()
+    _wire_commands(container)
 
     # ── MT5 + trading services (background, retries forever) ──────────────────
     t = threading.Thread(
         target=_connect_mt5_with_retry,
-        args=(container, config),
+        args=(container, config, expose_local_ui),
         name="mt5-connect",
         daemon=True,
     )
@@ -73,8 +73,6 @@ def bootstrap(
 def shutdown(container: AppContainer) -> None:
     logger.info("Shutting down Execution Engine")
     container.event_bus.emit(Events.SYSTEM_STOPPING)
-    if container.worker_events:
-        container.worker_events.stop()
     container.signal_consumer.stop()
     container.signal_queue.stop()
     container.position_manager.stop()
@@ -92,7 +90,9 @@ def shutdown(container: AppContainer) -> None:
 _MT5_RETRY_DELAYS = [5, 10, 15, 30, 60]   # seconds; last value repeats
 
 
-def _connect_mt5_with_retry(container: AppContainer, config: AppConfig) -> None:
+def _connect_mt5_with_retry(
+    container: AppContainer, config: AppConfig, expose_local_ui: bool
+) -> None:
     """
     Keep trying to connect to MT5 until it succeeds, then start the
     trading services.  Runs in a daemon thread so the service (and UIBridge)
@@ -102,7 +102,7 @@ def _connect_mt5_with_retry(container: AppContainer, config: AppConfig) -> None:
     while True:
         attempt += 1
         try:
-            _attempt_mt5_connect(container, config)
+            _attempt_mt5_connect(container, config, expose_local_ui)
             # _attempt_mt5_connect only returns normally on success
             return
         except Exception as exc:
@@ -116,7 +116,9 @@ def _connect_mt5_with_retry(container: AppContainer, config: AppConfig) -> None:
             time.sleep(delay)
 
 
-def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
+def _attempt_mt5_connect(
+    container: AppContainer, config: AppConfig, expose_local_ui: bool
+) -> None:
     """Single connection attempt.  Raises on any failure."""
     container.mt5_client.connect()
 
@@ -183,9 +185,8 @@ def _attempt_mt5_connect(container: AppContainer, config: AppConfig) -> None:
     # Start trading services
     container.signal_queue.start()
     container.position_manager.start()
-    # Workers receive commands through manager-owned IPC. The manager owns the
-    # only Gateway connection.
-    if not container.worker_events:
+    # Workers receive signals through manager-owned IPC — not the gateway WS.
+    if expose_local_ui:
         container.signal_consumer.start()
 
     container.event_bus.emit(Events.SYSTEM_STARTED)

@@ -1,6 +1,6 @@
-from pathlib import Path
+﻿from pathlib import Path
 
-from src.manager.service import ManagerRuntime
+from manager.app.service import ManagerRuntime
 
 
 def test_runtime_bootstraps_fresh_registry_before_loading_secrets(tmp_path: Path) -> None:

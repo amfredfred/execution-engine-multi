@@ -1,4 +1,4 @@
-"""
+﻿"""
 src/gui/pages/manager.py — AQ Manager control page.
 
 Mirrors engine.py but targets the AQ Manager scheduled task
@@ -13,17 +13,17 @@ from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
-from src.gui.theme import (
+from manager.gui.theme import (
     GREEN, RED, YELLOW, INFO, MUTED, TEXT,
     BASE, SURFACE_RAISED, LINE, LINE_STRONG,
     DANGER_BG, DANGER_BORDER, INFO_BG, INFO_BORDER,
     SUCCESS_BG, SUCCESS_BORDER,
     section_rule, info_row, page_header,
 )
-from src.gui.components import ActionBanner, PrimaryButton
+from manager.gui.components import ActionBanner, PrimaryButton
 
 if TYPE_CHECKING:
-    from src.gui.app import ApexTraderGUI
+    from manager.gui.app import ApexTraderGUI
 
 
 class ManagerPage(ctk.CTkFrame):
