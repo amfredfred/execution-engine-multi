@@ -38,6 +38,7 @@ def test_get_license_info_reports_missing_manager_key() -> None:
     result = provisioner.get_license_info()
 
     assert result["configured"] is False
+    assert result["authoritative"] is False
     assert result["symbols"] == []
     assert "No manager license key" in result["error"]
 
@@ -55,6 +56,7 @@ def test_preflight_returns_gateway_symbols_without_saving(mock_urlopen) -> None:
     result = provisioner.preflight_license("TR-NEW-LICENSE-KEY-12345")
 
     assert result["valid"] is True
+    assert result["authoritative"] is True
     assert result["symbols"] == ["XAUUSD", "EURUSD"]
     secrets.set_activation_key.assert_not_called()
 

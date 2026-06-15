@@ -708,3 +708,54 @@ def test_manager_worker_event_deduplication_survives_restart(tmp_path: Path) -> 
     reopened = AgentRegistry(str(tmp_path / "manager"))
     reopened.init()
     assert reopened.worker_event_processed("event-1")
+
+
+def test_manager_only_acks_execution_event_after_gateway_delivery() -> None:
+    registry = MagicMock()
+    registry.worker_event_processed.return_value = False
+    hub = EngineEventHub(registry, "secret")
+    hub.send_command = MagicMock()
+    hub.set_event_callbacks(MagicMock(), MagicMock(return_value=False))
+    event = EngineEvent(
+        "engine-1",
+        2,
+        EngineEventType.EXECUTION_EVENT,
+        {"event_type": "risk.rejected", "data": {"reason": "Actual R:R too low"}},
+    )
+
+    hub._handle_event(event)
+
+    registry.record_worker_event.assert_not_called()
+    hub.send_command.assert_not_called()
+
+    hub._on_execution_event = MagicMock(return_value=True)
+    hub._handle_event(event)
+
+    registry.record_worker_event.assert_called_once_with(event.event_id, "engine-1")
+    hub.send_command.assert_called_once_with(
+        "engine-1",
+        EngineCommandType.EVENT_ACK,
+        {"event_id": event.event_id},
+    )
+
+
+def test_manager_gateway_forwards_managed_execution_event() -> None:
+    connector = GatewayConnector("", MagicMock(), MagicMock())
+    connector._client = MagicMock()
+    connector._client.is_connected.return_value = True
+    connector._client.send.return_value = True
+    connector._activated.set()
+
+    assert connector.push_execution_event(
+        "engine-1",
+        "risk.rejected",
+        {"signal_id": "signal-1", "reason": "Actual R:R too low"},
+    )
+
+    frame = json.loads(connector._client.send.call_args.args[0])
+    assert frame["event"] == "execution.event"
+    assert frame["data"]["payload"] == {
+        "engine_id": "engine-1",
+        "event_type": "risk.rejected",
+        "data": {"signal_id": "signal-1", "reason": "Actual R:R too low"},
+    }

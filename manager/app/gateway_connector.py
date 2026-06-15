@@ -140,6 +140,16 @@ class GatewayConnector:
         if self._activated.is_set():
             self._send_agent_snapshot(agent_id, snapshot)
 
+    def push_execution_event(self, agent_id: str, event_type: str, data: dict) -> bool:
+        """Forward an existing worker execution event through the manager session."""
+        if not self.is_connected():
+            return False
+        return self._send("execution.event", {
+            "engine_id": agent_id,
+            "event_type": event_type,
+            "data": data,
+        }) is not None
+
     def forget_agent(self, agent_id: str) -> None:
         """Called when an agent is deprovisioned."""
         with self._snapshots_lock:
@@ -321,7 +331,7 @@ class GatewayConnector:
             if self._activated.is_set():
                 self._flush_all_snapshots()
 
-    def _send(self, event: str, payload: dict) -> str:
+    def _send(self, event: str, payload: dict) -> str | None:
         message_id = str(uuid4())
         frame = {
             "event": event,
@@ -332,6 +342,6 @@ class GatewayConnector:
                 "payload": payload,
             },
         }
-        if self._client:
-            self._client.send(json.dumps(frame, separators=(",", ":")))
-        return message_id
+        if self._client and self._client.send(json.dumps(frame, separators=(",", ":"))):
+            return message_id
+        return None

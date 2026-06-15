@@ -52,7 +52,7 @@ class EngineEventHub:
         self._server: _ThreadingServer | None = None
         self._thread: threading.Thread | None = None
         self._on_snapshot: Callable[[str, AgentSnapshot], None] = lambda *_: None
-        self._on_execution_event: Callable[[str, str, dict], None] = lambda *_: None
+        self._on_execution_event: Callable[[str, str, dict], bool] = lambda *_: False
         self._on_worker_ready: Callable[[str], None] = lambda *_: None
 
     def start(self) -> None:
@@ -175,7 +175,7 @@ class EngineEventHub:
     def set_event_callbacks(
         self,
         on_snapshot: Callable[[str, AgentSnapshot], None],
-        on_execution_event: Callable[[str, str, dict], None],
+        on_execution_event: Callable[[str, str, dict], bool],
     ) -> None:
         self._on_snapshot = on_snapshot
         self._on_execution_event = on_execution_event
@@ -314,18 +314,26 @@ class EngineEventHub:
         elif event.event_type == EngineEventType.EXECUTION_EVENT:
             event_type = str(event.payload.get("event_type") or "unknown")
             data = event.payload.get("data")
-            if not self._registry.worker_event_processed(event.event_id):
-                self._on_execution_event(
+            delivered = self._registry.worker_event_processed(event.event_id)
+            if not delivered:
+                delivered = self._on_execution_event(
                     engine_id,
                     event_type,
                     data if isinstance(data, dict) else {},
                 )
+            if delivered:
                 self._registry.record_worker_event(event.event_id, engine_id)
-            self.send_command(
-                engine_id,
-                EngineCommandType.EVENT_ACK,
-                {"event_id": event.event_id},
-            )
+                self.send_command(
+                    engine_id,
+                    EngineCommandType.EVENT_ACK,
+                    {"event_id": event.event_id},
+                )
+            else:
+                logger.warning(
+                    "Execution event %s from %s remains pending for retry",
+                    event_type,
+                    engine_id,
+                )
         elif event.event_type in {
             EngineEventType.COMMAND_ACK,
             EngineEventType.COMMAND_REJECTED,

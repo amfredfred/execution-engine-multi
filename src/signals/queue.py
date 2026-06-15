@@ -112,10 +112,14 @@ class SignalQueue:
                 )
 
     def pause(self) -> None:
+        if self._paused.is_set():
+            return
         self._paused.set()
         logger.info("SignalQueue paused")
 
     def resume(self) -> None:
+        if not self._paused.is_set():
+            return
         self._paused.clear()
         logger.info("SignalQueue resumed")
 

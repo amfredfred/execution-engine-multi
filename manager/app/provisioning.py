@@ -153,6 +153,7 @@ class AgentProvisioner:
             return {
                 "configured": False,
                 "valid": False,
+                "authoritative": False,
                 "symbols": [],
                 "error": "No manager license key configured",
             }
@@ -160,6 +161,7 @@ class AgentProvisioner:
             return {
                 "configured": True,
                 "valid": False,
+                "authoritative": False,
                 "symbols": [],
                 "error": "Gateway HTTP URL is not configured",
             }
@@ -171,6 +173,7 @@ class AgentProvisioner:
             return {
                 "configured": True,
                 "valid": False,
+                "authoritative": False,
                 "symbols": [],
                 "error": str(exc),
             }
@@ -205,6 +208,7 @@ class AgentProvisioner:
             raise LicensePreflightError(f"License preflight failed: {exc}") from exc
 
         data["configured"] = bool(self._secrets.get_activation_key())
+        data["authoritative"] = True
         data["error"] = None if data.get("valid") else "License key is invalid"
         if cache and data.get("valid"):
             data["_cached_at"] = time.time()

@@ -30,3 +30,17 @@ def test_queue_deduplicates_exact_signal_id() -> None:
     queue.put(signal)
 
     assert queue.depth() == 1
+
+
+def test_pause_and_resume_are_idempotent(caplog) -> None:
+    queue = SignalQueue(lambda _: None)
+    caplog.set_level("INFO", logger="src.signals.queue")
+
+    queue.pause()
+    queue.pause()
+    queue.resume()
+    queue.resume()
+
+    messages = [record.message for record in caplog.records]
+    assert messages.count("SignalQueue paused") == 1
+    assert messages.count("SignalQueue resumed") == 1

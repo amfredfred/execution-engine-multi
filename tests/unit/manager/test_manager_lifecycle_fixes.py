@@ -8,7 +8,7 @@ from manager.app.process_supervisor import ProcessSupervisor
 from manager.app.reconciliation import RestartReconciler, _pid_is_alive
 from manager.app.registry import AgentRegistry
 from manager.app.service import ManagerRuntime
-from src.runtime.contracts import EngineEvent, EngineEventType
+from src.runtime.contracts import EngineCommandType, EngineEvent, EngineEventType
 
 
 def _agent(tmp_path: Path) -> AgentRegistration:
@@ -227,3 +227,38 @@ def test_manager_health_includes_registry_ipc_signal_manager_and_workers() -> No
     assert report["signal_manager"]["connected"] is True
     assert report["gateway"]["reachable"] is True
     assert report["gateway"]["connected"] is True
+
+
+def test_license_verification_failure_does_not_pause_running_agents() -> None:
+    runtime = ManagerRuntime.__new__(ManagerRuntime)
+    runtime.registry = MagicMock()
+    runtime.registry.list_agents.return_value = [MagicMock(desired_status="running")]
+    runtime.event_hub = MagicMock()
+
+    runtime._apply_license_info({
+        "valid": False,
+        "authoritative": False,
+        "error": "Gateway unreachable",
+    })
+
+    runtime.event_hub.submit_command.assert_not_called()
+
+
+def test_authoritative_invalid_license_pauses_running_agents() -> None:
+    runtime = ManagerRuntime.__new__(ManagerRuntime)
+    runtime.registry = MagicMock()
+    runtime.registry.list_agents.return_value = [
+        MagicMock(agent_id="agent-1", desired_status="running"),
+        MagicMock(agent_id="agent-2", desired_status="stopped"),
+    ]
+    runtime.event_hub = MagicMock()
+
+    runtime._apply_license_info({
+        "valid": False,
+        "authoritative": True,
+        "error": "License key is invalid",
+    })
+
+    runtime.event_hub.submit_command.assert_called_once_with(
+        "agent-1", EngineCommandType.PAUSE, {},
+    )

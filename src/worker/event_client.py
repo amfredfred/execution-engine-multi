@@ -146,6 +146,7 @@ class WorkerEventClient:
                 if self._container.runtime_ready.is_set() and not self._ready_emitted:
                     self._emit(EngineEventType.WORKER_READY, {"pid": os.getpid()})
                     self._ready_emitted = True
+                self._replay_outbox()
                 self._emit(EngineEventType.ENGINE_SNAPSHOT, self._build_snapshot())
             except Exception as exc:
                 logger.debug("Snapshot emit failed: %s", exc)

@@ -136,7 +136,7 @@ class ManagerRuntime:
         )
         self.event_hub.set_event_callbacks(
             on_snapshot=self.gateway_connector.push_agent_snapshot,
-            on_execution_event=self.signal_router.forward_execution_event,
+            on_execution_event=self.gateway_connector.push_execution_event,
         )
         self.event_hub.set_worker_ready_callback(self.config_revisions.worker_ready)
 
@@ -226,16 +226,29 @@ class ManagerRuntime:
             try:
                 info = self.provisioner.get_license_info(force=True)
             except Exception as exc:
-                info = {"valid": False, "error": str(exc)}
-            if info.get("valid"):
-                continue
-            reason = info.get("error") or "license invalid or expired"
-            logger.error("License enforcement paused new entries: %s", reason)
-            for reg in self.registry.list_agents():
-                if reg.desired_status == "running":
-                    self.event_hub.submit_command(
-                        reg.agent_id, EngineCommandType.PAUSE, {}
-                    )
+                info = {
+                    "valid": False,
+                    "authoritative": False,
+                    "error": str(exc),
+                }
+            self._apply_license_info(info)
+
+    def _apply_license_info(self, info: dict) -> None:
+        if info.get("valid"):
+            return
+        reason = info.get("error") or "license invalid or expired"
+        if not info.get("authoritative"):
+            logger.warning(
+                "License verification unavailable; leaving agents running: %s",
+                reason,
+            )
+            return
+        logger.error("License enforcement paused new entries: %s", reason)
+        for reg in self.registry.list_agents():
+            if reg.desired_status == "running":
+                self.event_hub.submit_command(
+                    reg.agent_id, EngineCommandType.PAUSE, {}
+                )
 
     def can_shutdown(self) -> tuple[bool, str]:
         exposed = [
