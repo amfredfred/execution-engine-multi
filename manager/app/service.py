@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 
 from manager.app.api import LocalManagerApi
+from manager.app.gateway_connector import GatewayConnector
 from manager.app.models import AgentStatus
 from manager.app.config_store import AgentConfigStore
 from manager.app.config_revisions import ConfigRevisionService
@@ -100,6 +101,32 @@ class ManagerRuntime:
             on_agent_changed=self._on_agent_changed,
         )
 
+        # ── Gateway reachability + WebSocket session ──────────────────────
+        self._gateway_http_url: str = gateway_http_url.rstrip("/")
+        self._gateway_reachable: bool | None = None   # None = not yet checked
+        self._gateway_check_lock = threading.Lock()
+        # Convert https://host → wss://host/engine
+        gw_ws_url = (
+            self._gateway_http_url
+            .replace("https://", "wss://")
+            .replace("http://", "ws://")
+            + "/engine"
+            if self._gateway_http_url else ""
+        )
+        # Only route gateway signals through GatewayConnector when there is no
+        # direct Signal Manager subscription; otherwise ManagerSignalRouter
+        # already handles them and wiring both would cause duplicate delivery.
+        gw_signal_cb = (
+            self._on_gateway_signal if not signal_ws_url else None
+        )
+        self.gateway_connector = GatewayConnector(
+            gateway_ws_url=gw_ws_url,
+            secrets=self.secrets,
+            registry=self.registry,
+            engine_version=engine_version,
+            on_signal=gw_signal_cb,
+        )
+
         # ── Signal Router ─────────────────────────────────────────────────
         self.signal_router = ManagerSignalRouter(
             registry=self.registry,
@@ -108,7 +135,7 @@ class ManagerRuntime:
             signal_ws_token=signal_ws_token,
         )
         self.event_hub.set_event_callbacks(
-            on_snapshot=lambda agent_id, snap: None,
+            on_snapshot=self.gateway_connector.push_agent_snapshot,
             on_execution_event=self.signal_router.forward_execution_event,
         )
         self.event_hub.set_worker_ready_callback(self.config_revisions.worker_ready)
@@ -135,11 +162,6 @@ class ManagerRuntime:
         self._license_stop = threading.Event()
         self._license_thread: threading.Thread | None = None
 
-        # ── Gateway reachability (cached, checked in background) ──────────
-        self._gateway_http_url: str = gateway_http_url.rstrip("/")
-        self._gateway_reachable: bool | None = None   # None = not yet checked
-        self._gateway_check_lock = threading.Lock()
-
     def start(self) -> None:
         logger.info("ManagerRuntime starting")
         self._migrate_activation_key()
@@ -162,6 +184,8 @@ class ManagerRuntime:
                 daemon=True,
             )
             self._license_thread.start()
+            self.gateway_connector.start()
+            started.append(self.gateway_connector)
             threading.Thread(
                 target=self._gateway_check_loop,
                 name="gateway-check",
@@ -192,6 +216,7 @@ class ManagerRuntime:
         self.desired.stop()
         self._stop_all_workers()
         self.signal_router.stop()
+        self.gateway_connector.stop()
         self.api.stop()
         self.event_hub.stop()
         logger.info("ManagerRuntime stopped")
@@ -246,10 +271,23 @@ class ManagerRuntime:
         """Called by OperationRunner after provision/deprovision."""
         active_agents = self.registry.list_agents()
         self.signal_router.refresh_rooms(active_agents)
+        if self.registry.get_agent(agent_id) is None:
+            self.gateway_connector.forget_agent(agent_id)
 
     def _on_activation_key_changed(self, activation_key: str) -> None:
         """Called when the manager license key changes (used for provisioning only)."""
         logger.info("Manager activation key updated")
+
+    def _on_gateway_signal(self, payload: dict) -> None:
+        """Called by GatewayConnector when a signal arrives via the gateway WS.
+
+        This path is only active when Signal Manager is not configured; it acts
+        as a fallback so the manager still receives signals routed by the gateway.
+        """
+        try:
+            self.signal_router.handle_gateway_signal(payload)
+        except Exception:
+            logger.exception("Gateway signal dispatch failed")
 
     def health_report(self) -> dict:
         registry_ok = False
@@ -263,6 +301,7 @@ class ManagerRuntime:
         ok = registry_ok and ipc_ok and workers["ok"] and signal_manager["ok"]
         with self._gateway_check_lock:
             gw_reachable = self._gateway_reachable
+        gw_connected = self.gateway_connector.is_connected()
         return {
             "ok": ok,
             "registry": {"ok": registry_ok},
@@ -271,6 +310,7 @@ class ManagerRuntime:
             "gateway": {
                 "url": self._gateway_http_url,
                 "reachable": gw_reachable,
+                "connected": gw_connected,
             },
             **workers,
         }

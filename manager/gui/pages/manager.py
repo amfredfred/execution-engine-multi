@@ -357,19 +357,23 @@ class ManagerPage(ctk.CTkFrame):
             )
 
         gw = health.get("gateway", {})
+        gw_connected = gw.get("connected", False)
         gw_reachable = gw.get("reachable")
-        gw_url = gw.get("url") or "apex-gateway.somicast.com"
-        if gw_reachable is None:
+        if gw_connected:
             self._lbl_gateway.configure(
-                text="○  Cloud Gateway: checking…", text_color=MUTED,
+                text="●  Cloud Gateway: connected", text_color=GREEN,
+            )
+        elif gw_reachable is None:
+            self._lbl_gateway.configure(
+                text="○  Cloud Gateway: connecting…", text_color=MUTED,
             )
         elif gw_reachable:
             self._lbl_gateway.configure(
-                text=f"●  Cloud Gateway: reachable ({gw_url})", text_color=GREEN,
+                text="○  Cloud Gateway: reachable, activating…", text_color=YELLOW,
             )
         else:
             self._lbl_gateway.configure(
-                text=f"✕  Cloud Gateway: unreachable ({gw_url})", text_color=RED,
+                text="✕  Cloud Gateway: unreachable", text_color=RED,
             )
 
     # ── Controls ─────────────────────────────────────────────────────────────

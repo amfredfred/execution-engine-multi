@@ -178,6 +178,7 @@ def test_manager_stops_workers_before_ipc_hub() -> None:
     runtime.api = MagicMock()
     runtime.event_hub = MagicMock()
     runtime.event_hub.get_all_snapshots.return_value = {}
+    runtime.gateway_connector = MagicMock()
     runtime._stop_all_workers = lambda: calls.append("workers")
     runtime.event_hub.stop.side_effect = lambda: calls.append("hub")
 
@@ -214,6 +215,9 @@ def test_manager_health_includes_registry_ipc_signal_manager_and_workers() -> No
     runtime._gateway_http_url = "https://apex-gateway.example"
     runtime._gateway_reachable = True
     runtime._gateway_check_lock = threading.Lock()
+    from manager.app.gateway_connector import GatewayConnector
+    runtime.gateway_connector = MagicMock(spec=GatewayConnector)
+    runtime.gateway_connector.is_connected.return_value = True
 
     report = runtime.health_report()
 
@@ -222,3 +226,4 @@ def test_manager_health_includes_registry_ipc_signal_manager_and_workers() -> No
     assert report["ipc"]["ok"] is True
     assert report["signal_manager"]["connected"] is True
     assert report["gateway"]["reachable"] is True
+    assert report["gateway"]["connected"] is True

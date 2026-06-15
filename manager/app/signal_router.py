@@ -117,6 +117,41 @@ class ManagerSignalRouter:
                 ws_token=self._signal_ws_token,
             )
 
+    def handle_gateway_signal(self, payload: dict) -> None:
+        """Route a signal received directly from the cloud gateway WS.
+
+        Used only when Signal Manager is not configured; the payload has the
+        same shape as a signal.triggered frame from the Signal Manager.
+        """
+        symbol = str(payload.get("symbol") or "").upper()
+        broker = str(payload.get("broker") or "").lower()
+        signal_id = str(payload.get("id") or payload.get("signal_id") or "")
+        if not symbol:
+            logger.warning("Gateway signal has no symbol — ignoring")
+            return
+
+        agents = self._registry.list_agents()
+        reference_ms = int(payload.get("emitted_at") or payload.get("created_at") or time.time() * 1000)
+        eligible = 0
+        for reg in agents:
+            if reg.status != AgentStatus.RUNNING:
+                continue
+            if symbol not in {s.upper() for s in (reg.symbols or [])}:
+                continue
+            if broker and not _broker_matches(broker, reg.mt5_server):
+                continue
+            eligible += 1
+            self._registry.queue_signal_delivery(
+                signal_id,
+                reg.agent_id,
+                payload,
+                reference_ms + 120_000,
+            )
+        logger.info(
+            "Gateway signal %s %s broker=%s → %d agent(s)", signal_id, symbol, broker or "(any)", eligible
+        )
+        self._process_due_deliveries()
+
     def forward_execution_event(
         self, agent_id: str, event_type: str, data: dict
     ) -> None:
