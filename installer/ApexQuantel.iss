@@ -150,3 +150,20 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
 Type: files; Name: "{app}\apex-quant-trader-agent\_internal\config.yaml"
 ; NOTE: {commonappdata}\Apex Quantel\Multi\ is intentionally NOT deleted on
 ; uninstall — it contains the agent registry, trade history, and user config.
+
+; ============================================================================
+; [Code] must be last — Pascal parser runs until EOF, not until next section
+; ============================================================================
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+// Kill all running instances before file copy so Inno Setup never shows
+// the "close these applications" dialog to non-technical users.
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'),
+       '/F /IM apex-quant-trader-agent.exe',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
+  Result := '';
+end;

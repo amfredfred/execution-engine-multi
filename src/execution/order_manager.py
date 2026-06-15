@@ -286,6 +286,10 @@ class OrderManager:
 
         raise last_error or RuntimeError("Order failed after all retries")
 
+    def modify_position_levels(self, ticket: int, sl: float, tp: float) -> None:
+        """Update SL and TP on an already-filled position."""
+        self._orders.modify_position(ticket=ticket, sl=sl, tp=tp)
+
     # ── Emergency close ───────────────────────────────────────────────────────
 
     def _emergency_close(
@@ -311,8 +315,7 @@ class OrderManager:
                 price=close_price,
                 slippage=self._cfg.slippage,
                 magic=self._cfg.magic,
-                comment=f"slippage-close",
-                #  {self._cfg.comment}
+                comment=f"slippage-close {self._cfg.comment}".strip(),
                 filling_mode=symbol_info.order_filling_mode,
             )
             logger.info("Emergency close executed", extra={"ticket": ticket})

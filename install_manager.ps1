@@ -80,16 +80,17 @@ function Remove-ManagerTask {
 }
 
 function Kill-ManagerOrphans {
-    # 1) Kill by command-line match (catches dev builds and most installs)
+    # 1) Kill by command-line match — catches manager AND agent workers
+    #    (both use the same exe; workers have --agent, manager has --manager)
     $escapedDir = [regex]::Escape($EngineDir)
     Get-CimInstance Win32_Process | Where-Object {
         $_.ProcessId -ne $PID -and
         $_.CommandLine -and
         $_.CommandLine -match $escapedDir -and
-        $_.CommandLine -match "--manager" -and
+        ($_.CommandLine -match "--manager" -or $_.CommandLine -match "--agent") -and
         ($_.Name -like "apex-quant*" -or $_.Name -like "python*")
     } | ForEach-Object {
-        Write-Host "  Stopping Manager orphan PID $($_.ProcessId): $($_.Name)"
+        Write-Host "  Stopping orphan PID $($_.ProcessId): $($_.Name)"
         Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
     }
 

@@ -28,6 +28,7 @@ class StrategyRouter:
         adapter = (
             self._adapters.get(signal.resolved_symbol)
             or self._adapters.get(signal.direction.value)
+            or self._adapters.get("default")
             or self._fallback
         )
         adapted = adapter.adapt(signal)

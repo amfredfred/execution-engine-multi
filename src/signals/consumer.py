@@ -391,6 +391,11 @@ class SignalConsumer:
             report["trade_id"] = trade_id
         if broker_ticket:
             report["broker_ticket"] = broker_ticket
+        # Worker mode: lifecycle thread is not running — route directly via IPC sink.
+        if self._execution_event_sink:
+            self._execution_event_sink("execution.lifecycle", report)
+            return
+
         # 2.11 — Persist to outbox before enqueuing so the event survives a WS disconnect
         outbox_id = self._persist_to_outbox(
             "execution.lifecycle", report, stage=stage, signal_id=signal_id

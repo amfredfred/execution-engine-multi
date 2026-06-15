@@ -45,8 +45,8 @@ class ApexTraderGUI(ctk.CTk):
         self.title("AQ Agent")
         self.geometry("1200x760")
         self.minsize(900, 580)
-        self._root = ctk.CTkFrame(self, fg_color=BASE, corner_radius=0)
-        self._root.pack(fill="both", expand=True)
+        self._body = ctk.CTkFrame(self, fg_color=BASE, corner_radius=0)
+        self._body.pack(fill="both", expand=True)
         if _TOKEN_PATH.exists():
             self._show_control_plane()
         else:
@@ -57,7 +57,7 @@ class ApexTraderGUI(ctk.CTk):
         from src.gui.onboarding import OnboardingWizard
 
         wizard = OnboardingWizard(
-            self._root,
+            self._body,
             config=self.config,
             installer=self.installer,
             on_complete=self._show_control_plane,
@@ -67,10 +67,10 @@ class ApexTraderGUI(ctk.CTk):
 
     def _show_control_plane(self) -> None:
         self._clear_root()
-        sidebar = ctk.CTkFrame(self._root, width=250, fg_color=SURFACE, corner_radius=0)
+        sidebar = ctk.CTkFrame(self._body, width=250, fg_color=SURFACE, corner_radius=0)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
-        content = ctk.CTkFrame(self._root, fg_color=BASE, corner_radius=0)
+        content = ctk.CTkFrame(self._body, fg_color=BASE, corner_radius=0)
         content.pack(side="left", fill="both", expand=True)
         logo = load_logo_image((26, 26))
         ctk.CTkLabel(sidebar, text="  Apex Quantel", image=logo, compound="left").pack(
@@ -80,11 +80,13 @@ class ApexTraderGUI(ctk.CTk):
         self._nav_buttons = {}
         self._pages = {}
         from src.gui.pages.agents import AddAgentPage, AgentsPage
+        from src.gui.pages.agent_dashboard import AgentDashboardPage
         from src.gui.pages.manager import ManagerPage
 
         self._pages["Agents"] = AgentsPage(content, self)
         self._pages["Manager"] = ManagerPage(content, self)
         self._pages["AddAgent"] = AddAgentPage(content, self)
+        self._pages["AgentDashboard"] = AgentDashboardPage(content, self)
         for name in ("Agents", "Manager"):
             button = ctk.CTkButton(
                 sidebar,
@@ -123,6 +125,7 @@ class ApexTraderGUI(ctk.CTk):
 
     def select_agent(self, engine_id: str, monitoring_port: int) -> None:
         self.manager_state.select_agent(engine_id, monitoring_port)
+        self.navigate("AgentDashboard")
 
     def restart_manager(self, on_done=None) -> None:
         def run() -> None:
@@ -162,7 +165,7 @@ class ApexTraderGUI(ctk.CTk):
             page.set_manager_online(online)
 
     def _clear_root(self) -> None:
-        for child in self._root.winfo_children():
+        for child in self._body.winfo_children():
             child.destroy()
 
     def _close(self) -> None:

@@ -346,7 +346,7 @@ class ExecutionEngine:
                 },
             )
             try:
-                self._orders._orders.modify_position(
+                self._orders.modify_position_levels(
                     ticket=ticket, sl=adjusted_sl, tp=adjusted_tp2
                 )
             except Exception:
@@ -414,11 +414,6 @@ class ExecutionEngine:
         try:
             self._store.add(trade)
         except Exception:
-            persisted = self._repo.save(trade)
-            with self._pending_lock:
-                self._release(signal.resolved_symbol, signal.id)
-            if self._cluster_tracker is not None:
-                self._cluster_tracker.release_signal(signal)
             logger.exception(
                 "Trade opened but in-memory tracking failed; manual intervention required",
                 extra={
@@ -426,10 +421,17 @@ class ExecutionEngine:
                     "signal_id": signal.id,
                     "ticket": ticket,
                     "symbol": trade.symbol,
-                    "persisted": persisted,
                 },
             )
             metrics.increment("trades.tracking_failures")
+            # The MT5 position IS live — still notify downstream systems so the
+            # cluster tracker and equity throttle reflect the real exposure.
+            if self._cluster_tracker is not None:
+                self._cluster_tracker.mark_trade_opened(trade)
+            with self._pending_lock:
+                self._release(signal.resolved_symbol, signal.id)
+            self._repo.save(trade)
+            self._bus.emit(Events.TRADE_OPENED, trade)
             self._bus.emit(
                 Events.TRADE_ERROR,
                 {"signal": signal, "reason": "trade_tracking_failed_after_fill"},

@@ -12,6 +12,7 @@ import secrets as _secrets
 from pathlib import Path
 
 from src.manager.api import LocalManagerApi
+from src.manager.models import AgentStatus
 from src.manager.config_store import AgentConfigStore
 from src.manager.config_revisions import ConfigRevisionService
 from src.manager.desired_state import DesiredStateSupervisor
@@ -152,7 +153,22 @@ class ManagerRuntime:
         self.signal_router.stop()
         self.api.stop()
         self.event_hub.stop()
+        self._stop_all_workers()
         logger.info("ManagerRuntime stopped")
+
+    def _stop_all_workers(self) -> None:
+        """Terminate all running agent subprocesses before the manager exits."""
+        for reg in self.registry.list_agents():
+            if reg.status in (
+                AgentStatus.RUNNING,
+                AgentStatus.STARTING,
+                AgentStatus.STOPPING,
+            ):
+                try:
+                    self.supervisor.terminate(reg.agent_id, force=True)
+                    logger.info("Stopped agent worker %s", reg.agent_id)
+                except Exception as exc:
+                    logger.warning("Could not stop agent %s: %s", reg.agent_id, exc)
 
     # ── Event callbacks ───────────────────────────────────────────────────
 

@@ -89,8 +89,9 @@ class AgentCard(ctk.CTkFrame):
     def _build(self, a: "AgentCardState") -> None:
         tone = _STATUS_TONE.get(a.status, "normal")
 
-        # Top accent bar
-        ctk.CTkFrame(self, height=2, fg_color=_TONE_TEXT.get(tone, MUTED), corner_radius=0).pack(fill="x")
+        # Top accent bar — kept as instance attr for in-place color update
+        self._accent = ctk.CTkFrame(self, height=2, fg_color=_TONE_TEXT.get(tone, MUTED), corner_radius=0)
+        self._accent.pack(fill="x")
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=14, pady=12)
@@ -105,14 +106,15 @@ class AgentCard(ctk.CTkFrame):
         badge_bg = _TONE_BG.get(tone, SURFACE_RAISED)
         badge_bd = _TONE_BD.get(tone, LINE_STRONG)
         badge_fg = _TONE_TEXT.get(tone, MUTED)
-        badge = ctk.CTkFrame(row1, fg_color=badge_bg, border_width=1, border_color=badge_bd, corner_radius=4)
-        badge.pack(side="right")
-        ctk.CTkLabel(
-            badge, text=_STATUS_LABEL.get(a.status, a.status),
+        self._badge = ctk.CTkFrame(row1, fg_color=badge_bg, border_width=1, border_color=badge_bd, corner_radius=4)
+        self._badge.pack(side="right")
+        self._badge_lbl = ctk.CTkLabel(
+            self._badge, text=_STATUS_LABEL.get(a.status, a.status),
             font=ctk.CTkFont(size=10, weight="bold"), text_color=badge_fg,
-        ).pack(padx=8, pady=2)
+        )
+        self._badge_lbl.pack(padx=8, pady=2)
 
-        # Row 2 — MT5 login + server
+        # Row 2 — MT5 login + server (static — never changes after provisioning)
         login_str  = str(a.mt5_login) if a.mt5_login else "—"
         server_str = a.mt5_server or "—"
         ctk.CTkLabel(
@@ -127,26 +129,67 @@ class AgentCard(ctk.CTkFrame):
         gw_col = GREEN if a.gateway_connected else MUTED
         metrics_row = ctk.CTkFrame(body, fg_color="transparent")
         metrics_row.pack(fill="x", pady=(6, 0))
-        ctk.CTkLabel(
+        self._metrics_lbl = ctk.CTkLabel(
             metrics_row, text=f"Bal: {bal}  Eq: {eq}  Trades: {a.open_trades}",
             font=ctk.CTkFont(family="Consolas", size=11), text_color=TEXT_SOFT, anchor="w",
-        ).pack(side="left")
-        ctk.CTkLabel(
+        )
+        self._metrics_lbl.pack(side="left")
+        self._gw_lbl = ctk.CTkLabel(
             metrics_row, text=f"{gw_dot} GW",
             font=ctk.CTkFont(size=11), text_color=gw_col,
-        ).pack(side="right")
+        )
+        self._gw_lbl.pack(side="right")
 
-        # Error message
+        # Error message (hidden when no error)
+        self._error_lbl = ctk.CTkLabel(
+            body, text="",
+            font=ctk.CTkFont(size=10), text_color=RED, anchor="w", wraplength=280,
+        )
         if a.error_message and a.status in ("CRASH_LOOP", "ERROR"):
-            ctk.CTkLabel(
-                body, text=a.error_message[:80],
-                font=ctk.CTkFont(size=10), text_color=RED, anchor="w", wraplength=280,
-            ).pack(anchor="w", pady=(4, 0))
+            self._error_lbl.configure(text=a.error_message[:80])
+            self._error_lbl.pack(anchor="w", pady=(4, 0))
 
-        # Action buttons
-        btn_row = ctk.CTkFrame(body, fg_color="transparent")
-        btn_row.pack(fill="x", pady=(10, 0))
-        self._add_buttons(btn_row, a)
+        # Action buttons — kept as frame so buttons can be swapped on status change
+        self._btn_row = ctk.CTkFrame(body, fg_color="transparent")
+        self._btn_row.pack(fill="x", pady=(10, 0))
+        self._add_buttons(self._btn_row, a)
+
+    def update(self, a: "AgentCardState") -> None:
+        """Patch mutable display fields without destroying and recreating the card."""
+        tone = _STATUS_TONE.get(a.status, "normal")
+
+        self._accent.configure(fg_color=_TONE_TEXT.get(tone, MUTED))
+        self._badge.configure(
+            fg_color=_TONE_BG.get(tone, SURFACE_RAISED),
+            border_color=_TONE_BD.get(tone, LINE_STRONG),
+        )
+        self._badge_lbl.configure(
+            text=_STATUS_LABEL.get(a.status, a.status),
+            text_color=_TONE_TEXT.get(tone, MUTED),
+        )
+
+        bal    = f"${a.balance:,.2f}" if a.balance is not None else "—"
+        eq     = f"${a.equity:,.2f}"  if a.equity  is not None else "—"
+        self._metrics_lbl.configure(text=f"Bal: {bal}  Eq: {eq}  Trades: {a.open_trades}")
+        gw_dot = "●" if a.gateway_connected else "○"
+        self._gw_lbl.configure(
+            text=f"{gw_dot} GW",
+            text_color=GREEN if a.gateway_connected else MUTED,
+        )
+
+        if a.error_message and a.status in ("CRASH_LOOP", "ERROR"):
+            self._error_lbl.configure(text=a.error_message[:80])
+            self._error_lbl.pack(anchor="w", pady=(4, 0))
+        else:
+            self._error_lbl.pack_forget()
+
+        # Rebuild buttons only when status tier changes (different button set needed)
+        if a.status != self._agent.status:
+            for w in self._btn_row.winfo_children():
+                w.destroy()
+            self._add_buttons(self._btn_row, a)
+
+        self._agent = a
 
     def _add_buttons(self, parent: tk.Widget, a: "AgentCardState") -> None:
         is_running = a.status == "RUNNING"
@@ -262,6 +305,16 @@ class AgentsPage(ctk.CTkFrame):
         self.after(0, _apply)
 
     def _refresh(self, agents: list) -> None:
+        new_ids = [a.agent_id for a in agents]
+        old_ids = [c._agent.agent_id for c in self._cards]
+
+        if new_ids == old_ids and agents:
+            # Agent set unchanged — patch labels in-place to avoid flicker
+            for card, a in zip(self._cards, agents):
+                card.update(a)
+            return
+
+        # Agent set changed (add/remove) — full rebuild
         for card in self._cards:
             card.destroy()
         self._cards = []
