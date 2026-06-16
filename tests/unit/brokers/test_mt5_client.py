@@ -17,7 +17,7 @@ def _client(**mappings: str) -> Mt5Client:
     )
 
 
-def test_resolve_symbol_requires_explicit_mapping_for_broker_suffix() -> None:
+def test_resolve_symbol_requires_config_mapping_for_gold_exness_alias() -> None:
     client = _client()
 
     with (
@@ -28,6 +28,36 @@ def test_resolve_symbol_requires_explicit_mapping_for_broker_suffix() -> None:
         patch("src.brokers.mt5.client.mt5.symbol_select") as select,
     ):
         assert client.resolve_symbol("XAU/USD") is None
+
+    select.assert_not_called()
+
+
+def test_resolve_symbol_uses_configured_us100_exness_alias() -> None:
+    client = _client(US100="USTEC_x100m")
+
+    with (
+        patch(
+            "src.brokers.mt5.client.mt5.symbols_get",
+            return_value=[SimpleNamespace(name="USTEC_x100m")],
+        ),
+        patch("src.brokers.mt5.client.mt5.symbol_select", return_value=True) as select,
+    ):
+        assert client.resolve_symbol("US100") == "USTEC_x100m"
+
+    select.assert_called_once_with("USTEC_x100m", True)
+
+
+def test_resolve_symbol_requires_config_mapping_for_us100_exness_alias() -> None:
+    client = _client()
+
+    with (
+        patch(
+            "src.brokers.mt5.client.mt5.symbols_get",
+            return_value=[SimpleNamespace(name="USTEC_x100m")],
+        ),
+        patch("src.brokers.mt5.client.mt5.symbol_select") as select,
+    ):
+        assert client.resolve_symbol("US100") is None
 
     select.assert_not_called()
 
@@ -48,6 +78,24 @@ def test_resolve_symbol_uses_explicit_mapping_exactly() -> None:
         assert client.resolve_symbol("XAU_USD") == "XAUUSDm"
 
     select.assert_called_once_with("XAUUSDm", True)
+
+
+def test_resolve_symbol_prefers_configured_mapping_over_canonical_exact() -> None:
+    client = _client(US100="USTEC_x100m")
+
+    with (
+        patch(
+            "src.brokers.mt5.client.mt5.symbols_get",
+            return_value=[
+                SimpleNamespace(name="USTEC_x100m"),
+                SimpleNamespace(name="US100"),
+            ],
+        ),
+        patch("src.brokers.mt5.client.mt5.symbol_select", return_value=True) as select,
+    ):
+        assert client.resolve_symbol("US100") == "USTEC_x100m"
+
+    select.assert_called_once_with("USTEC_x100m", True)
 
 
 def test_resolve_symbol_accepts_exact_canonical_symbol() -> None:

@@ -46,6 +46,17 @@ mt5:
   magic: 8858
   slippage: 10
   comment: bobisquote
+  # Canonical signal symbol -> broker-specific MT5 symbol.
+  # Keys are broker name patterns matched case-insensitively against mt5.server.
+  # The first key whose value is a substring of the server name wins.
+  # Each broker section maps canonical symbols to the names used in that terminal.
+  # Omit a symbol to use its canonical name unchanged (e.g. FBS uses US100 natively).
+  symbol_mappings:
+    exness:
+      XAUUSD: XAUUSDm
+      US100: USTEC_x100m
+    fundednext:
+      US100: NDX100
 
 risk:
   # Aligned with signal-engine circuit_breaker.max_consecutive_losses=10.

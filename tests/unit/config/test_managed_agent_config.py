@@ -4,6 +4,34 @@ import pytest
 import yaml
 
 from src.config.settings import AppConfig
+from manager.gui.config_manager import _extract_allowed
+
+
+def test_config_example_defines_broker_symbol_mappings() -> None:
+    config_path = Path(__file__).resolve().parents[3] / "config.example.yaml"
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert raw["mt5"]["symbol_mappings"] == {
+        "XAUUSD": "XAUUSDm",
+        "US100": "USTEC_x100m",
+    }
+
+
+def test_gui_config_save_preserves_symbol_mappings() -> None:
+    saved = _extract_allowed({
+        "mt5": {
+            "login": 12345678,
+            "symbol_mappings": {
+                "XAUUSD": "XAUUSDm",
+                "US100": "USTEC_x100m",
+            },
+        }
+    })
+
+    assert saved["mt5"]["symbol_mappings"] == {
+        "XAUUSD": "XAUUSDm",
+        "US100": "USTEC_x100m",
+    }
 
 
 def test_slim_managed_agent_config_uses_internal_risk_defaults(

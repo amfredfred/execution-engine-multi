@@ -792,6 +792,11 @@ class AddAgentPage(ctk.CTkFrame):
             "mt5_server":    server,
             "symbols":       symbols,
         }
+        symbol_mappings = self.app.config.get("mt5", "symbol_mappings", default={})
+        if isinstance(symbol_mappings, dict) and symbol_mappings:
+            payload["config_overrides"] = {
+                "mt5": {"symbol_mappings": symbol_mappings}
+            }
 
         self._banner.show("Submitting…", "info")
         self.app.manager_client.provision_agent(

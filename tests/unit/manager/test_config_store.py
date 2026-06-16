@@ -106,6 +106,26 @@ class TestConfigStoreSecrets:
         symbols = (written.get("gateway") or {}).get("symbols", [])
         assert symbols == reg.symbols
 
+    def test_symbol_mappings_written_from_overrides(self, store, tmp_path):
+        reg = _make_reg(tmp_path)
+        store.write_agent_config(
+            reg,
+            user_overrides={
+                "mt5": {
+                    "symbol_mappings": {
+                        "XAUUSD": "XAUUSDm",
+                        "US100": "USTEC_x100m",
+                    }
+                }
+            },
+        )
+
+        written = yaml.safe_load(Path(reg.config_path).read_text(encoding="utf-8"))
+        assert written["mt5"]["symbol_mappings"] == {
+            "XAUUSD": "XAUUSDm",
+            "US100": "USTEC_x100m",
+        }
+
     def test_update_config_redacts_password(self, store, tmp_path):
         reg = _make_reg(tmp_path)
         store.write_agent_config(reg)

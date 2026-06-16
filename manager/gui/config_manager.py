@@ -37,6 +37,7 @@ _ALLOWED_USER_PATHS: frozenset = frozenset({
     "mt5.password",
     "mt5.server",
     "mt5.path",
+    "mt5.symbol_mappings",
     "risk.max_losing_streak",
     "risk.max_daily_loss_percent",
     "risk.max_profit_drawdown_percent",

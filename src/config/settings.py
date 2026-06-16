@@ -560,6 +560,48 @@ class GatewayConfig:
             raise ValueError("gateway.symbols must contain at least one symbol.")
 
 
+def _resolve_symbol_mappings(raw: dict, server: str) -> Dict[str, str]:
+    """
+    Flatten symbol_mappings from config.
+
+    Supports two formats:
+      Flat (legacy):
+        symbol_mappings:
+          XAUUSD: XAUUSDm
+
+      Broker-keyed (new):
+        symbol_mappings:
+          fbs:
+            XAUUSD: XAUUSDm
+          exness:
+            XAUUSD: XAUUSDm
+            US100: USTEC_x100m
+
+    In the broker-keyed format the key is matched case-insensitively as a
+    substring of mt5.server (e.g. "fbs" matches "FBS-Demo", "exness" matches
+    "Exness-MT5Real"). The first match wins; unmatched brokers get no mappings.
+    """
+    if not raw:
+        return {}
+
+    # Detect broker-keyed format: all values are dicts
+    if all(isinstance(v, dict) for v in raw.values()):
+        server_lower = server.lower()
+        for broker_key, mappings in raw.items():
+            if broker_key.lower() in server_lower:
+                return {
+                    normalise_symbol(str(base)): str(target)
+                    for base, target in mappings.items()
+                }
+        return {}
+
+    # Legacy flat format
+    return {
+        normalise_symbol(str(base)): str(target)
+        for base, target in raw.items()
+    }
+
+
 @dataclass(frozen=True)
 class AppConfig:
     risk: RiskConfig
@@ -624,10 +666,9 @@ class AppConfig:
                 password=mt5_password,
                 server=str(mt5["server"]),
                 path=str(mt5.get("path", "")),
-                symbol_mappings={
-                    normalise_symbol(str(base)): str(broker)
-                    for base, broker in mt5.get("symbol_mappings", {}).items()
-                },
+                symbol_mappings=_resolve_symbol_mappings(
+                    mt5.get("symbol_mappings", {}), str(mt5["server"])
+                ),
                 broker_timezone=str(mt5.get("broker_timezone", "UTC")),
             ),
             risk=RiskConfig(
