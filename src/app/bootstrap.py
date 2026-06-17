@@ -224,7 +224,7 @@ def _wire_events(container: AppContainer) -> None:
         if not resolved:
             logger.error(
                 "Signal rejected: symbol not found in MT5",
-                extra={"signal_id": signal.id, "symbol": signal.symbol},
+                extra={"signal_id": signal.id, "symbol": signal.symbol, resolved:resolved},
             )
             container.event_bus.emit(
                 Events.SIGNAL_REJECTED,

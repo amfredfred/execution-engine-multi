@@ -54,7 +54,7 @@ mt5:
   symbol_mappings:
     exness:
       XAUUSD: XAUUSDm
-      US100: USTEC_x100m
+      US100: USTECm
     fundednext:
       US100: NDX100
 
@@ -71,7 +71,7 @@ risk:
   sl_ratio_threshold: 0.35
   symbol_sl_ratio_threshold:
     XAUUSD: 0.35   # commodity — wider spread tolerance
-    US100: 0.20    # index — tight SL-to-spread requirement
+    US100: 0.35    # index — tight SL-to-spread requirement
     EURUSD: 0.30   # forex
     GBPUSD: 0.30   # forex
     USDJPY: 0.30   # forex

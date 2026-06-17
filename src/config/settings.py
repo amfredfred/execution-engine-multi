@@ -589,17 +589,11 @@ def _resolve_symbol_mappings(raw: dict, server: str) -> Dict[str, str]:
         server_lower = server.lower()
         for broker_key, mappings in raw.items():
             if broker_key.lower() in server_lower:
-                return {
-                    normalise_symbol(str(base)): str(target)
-                    for base, target in mappings.items()
-                }
+                return {str(base): str(target) for base, target in mappings.items()}
         return {}
 
     # Legacy flat format
-    return {
-        normalise_symbol(str(base)): str(target)
-        for base, target in raw.items()
-    }
+    return {str(base): str(target) for base, target in raw.items()}
 
 
 @dataclass(frozen=True)
