@@ -34,9 +34,7 @@ gateway:
   symbols:
     - XAUUSD
     - US100
-    - EURUSD
-    - GBPUSD
-    - USDJPY
+    - XAGUSD
 
 mt5:
   login: 106189638
@@ -72,9 +70,7 @@ risk:
   symbol_sl_ratio_threshold:
     XAUUSD: 0.35   # commodity — wider spread tolerance
     US100: 0.35    # index — tight SL-to-spread requirement
-    EURUSD: 0.30   # forex
-    GBPUSD: 0.30   # forex
-    USDJPY: 0.30   # forex
+    XAGUSD: 0.33   # commodity
   no_hedging: true
   # Profit drawdown guard — pauses until midnight if today's closed P&L gives
   # back this % of start-of-day equity from its session peak. Dormant until
@@ -118,7 +114,7 @@ risk:
         after_first_loss_risk_multiplier: 0.5
         min_trade_risk_multiplier: 0.25
       - name: metals
-        symbols: [XAUUSD]
+        symbols: [XAUUSD, XAGUSD]
         max_same_day_loss_r: 1.5
         max_concurrent_positions: 1
         max_same_day_losses: 2
