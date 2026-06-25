@@ -27,7 +27,8 @@ signal_manager:
 # and lifecycle reporting back to the Apex Quantel cloud service.
 # ---------------------------------------------------------------------------
 gateway:
-  ws_url: wss://apex-gateway.somicast.com/engine
+  # ws_url: wss://apex-gateway.somicast.com/engine
+  ws_url: ws://localhost:4000/engine
   engine_id: execution-demo-001
   # engine_version is platform-managed — resolved from version.txt at startup.
   room_ttl_seconds: 3600
@@ -68,9 +69,9 @@ risk:
   # Example: 0.25 rejects 14.0 spread / 36.7 SL = 0.38.
   sl_ratio_threshold: 0.35
   symbol_sl_ratio_threshold:
-    XAUUSD: 0.35   # commodity — wider spread tolerance
-    US100: 0.35    # index — tight SL-to-spread requirement
-    XAGUSD: 0.33   # commodity
+    XAUUSD: 0.40   # commodity — wider spread tolerance
+    US100: 0.40    # index — tight SL-to-spread requirement
+    XAGUSD: 0.40   # commodity
   no_hedging: true
   # Profit drawdown guard — pauses until midnight if today's closed P&L gives
   # back this % of start-of-day equity from its session peak. Dormant until

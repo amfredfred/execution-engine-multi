@@ -72,12 +72,12 @@ _INTERNAL_DEFAULTS: dict = {
         "min_rr_ratio": 1.0,
         "max_lot_size": 100.0,
         "min_lot_size": 0.01,
-        "sl_ratio_threshold": 0.35,
+        "sl_ratio_threshold": 0.45,
         "max_profit_drawdown_percent": 2.0,
         "symbol_sl_ratio_threshold": {
-            "XAUUSD": 0.35,
-            "US100": 0.20,
-            "US500": 0.20,
+            "XAUUSD": 0.40,
+            "US100": 0.40,
+            "XAGUSD": 0.40,
         },
         "rolling_window_size": 2,
         "rolling_drawdown_pct": 2.0,
@@ -121,7 +121,7 @@ _INTERNAL_DEFAULTS: dict = {
         "tf_overrides": {
             "*": {
                 "5/5":   {"tp1_trigger_pct": 45.0},
-                "30/30": {"tp1_trigger_pct": 45.0},
+                "1/1": {"tp1_trigger_pct": 45.0},
             },
         },
         "spread_risk_multiplier": 1.0,
