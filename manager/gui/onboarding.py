@@ -319,7 +319,7 @@ class _StepWelcome(_WizardStep):
 
 # ── Step 2 — License Key ──────────────────────────────────────────────────────
 
-_DEFAULT_GW_WS_URL = "wss://apex-gateway.somicast.com/engine"
+_DEFAULT_GW_WS_URL = "ws://localhost:4000/engine"
 
 _SYMBOL_LABELS: dict[str, str] = {
     "XAUUSD": "Gold / US Dollar",

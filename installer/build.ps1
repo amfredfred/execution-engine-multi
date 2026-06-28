@@ -1,4 +1,7 @@
-﻿param(
+﻿
+# powershell -ExecutionPolicy Bypass -File build.ps1
+
+param(
     [switch]$SkipPackage,
     [switch]$SkipInstaller,
     [switch]$Clean

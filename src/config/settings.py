@@ -55,10 +55,10 @@ def _resolve_engine_version() -> str:
 
 _INTERNAL_DEFAULTS: dict = {
     "gateway": {
-        "ws_url": "wss://apex-gateway.somicast.com/engine",
+        "ws_url": "ws://localhost:4000/engine",
         "engine_version": _resolve_engine_version(),
         "room_ttl_seconds": 3600,
-        "symbols": ["XAUUSD"],
+        "symbols": ["XAUUSD", "XAGUSD"],
     },
     "mt5": {
         "magic": 8858,
@@ -120,7 +120,7 @@ _INTERNAL_DEFAULTS: dict = {
         "breakeven_max_buffer_pct_of_risk": 10.0,
         "tf_overrides": {
             "*": {
-                "5/5":   {"tp1_trigger_pct": 45.0},
+                "5/5": {"tp1_trigger_pct": 45.0},
                 "1/1": {"tp1_trigger_pct": 45.0},
             },
         },
