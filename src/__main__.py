@@ -53,7 +53,9 @@ def _worker_main(engine_id: str) -> None:
         config_revision=int(os.environ.get("ENGINE_CONFIG_REVISION", "1")),
         on_stop_requested=stop_event.set,
     )
-    container.signal_consumer.set_execution_event_sink(worker_events.emit_execution_event)
+    container.signal_consumer.set_execution_event_sink(
+        worker_events.emit_execution_event
+    )
 
     bootstrap(container, config, expose_local_ui=False)
     worker_events.start()
@@ -127,7 +129,9 @@ def _gui_main() -> None:
     if sys.platform == "win32":
         import ctypes
 
-        mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "Global\\ApexQuantel_GUI_v1")
+        mutex = ctypes.windll.kernel32.CreateMutexW(
+            None, True, "Global\\ApexQuantel_GUI_v1"
+        )
         if ctypes.windll.kernel32.GetLastError() == 183:
             hwnd = ctypes.windll.user32.FindWindowW(None, "Apex Quantel")
             if hwnd:

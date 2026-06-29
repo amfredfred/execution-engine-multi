@@ -758,7 +758,8 @@ class ManagerConfig:
         gw_ws = _INTERNAL_DEFAULTS["gateway"]["ws_url"]
         from urllib.parse import urlparse
         parsed = urlparse(gw_ws)
-        gw_http = f"https://{parsed.netloc}"
+        http_scheme = "https" if parsed.scheme in ("wss", "https") else "http"
+        gw_http = f"{http_scheme}://{parsed.netloc}"
         return cls(
             storage_path=str(base),
             agents_data_dir=str(base / "agents"),
