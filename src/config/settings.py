@@ -75,9 +75,9 @@ _INTERNAL_DEFAULTS: dict = {
         "sl_ratio_threshold": 0.45,
         "max_profit_drawdown_percent": 2.0,
         "symbol_sl_ratio_threshold": {
-            "XAUUSD": 0.40,
-            "US100": 0.40,
-            "XAGUSD": 0.40,
+            "XAUUSD": 0.75,
+            "US100": 0.75,
+            "XAGUSD": 0.75,
         },
         "rolling_window_size": 2,
         "rolling_drawdown_pct": 2.0,
