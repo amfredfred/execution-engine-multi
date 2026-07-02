@@ -64,8 +64,8 @@ risk:
   # Example: 0.25 rejects 14.0 spread / 36.7 SL = 0.38.
   sl_ratio_threshold: 0.35
   symbol_sl_ratio_threshold:
-    XAUUSD: 0.75   # commodity — wider spread tolerance
-    XAGUSD: 0.75   # commodity
+    XAUUSD: 0.35   # commodity — wider spread tolerance
+    XAGUSD: 0.65   # commodity
   no_hedging: true
   # Profit drawdown guard — pauses until midnight if today's closed P&L gives
   # back this % of start-of-day equity from its session peak. Dormant until
